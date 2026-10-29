@@ -6,6 +6,11 @@ void __cdecl kernel_main(void)
     volatile unsigned short *video_memory =
         (volatile unsigned short *)0xB8000;
 
+    for (unsigned int index = 0; index < 80 * 25; ++index)
+    {
+        video_memory[index] = 0x0F20;
+    }
+
     for (unsigned int index = 0; message[index] != '\0'; ++index)
     {
         unsigned char character = (unsigned char)message[index];
