@@ -77,7 +77,8 @@ if (-not $python)
 & $python.Source (Join-Path $root 'tools\make_disk.py') `
     --boot $bootSector `
     --kernel $kernelExecutable `
-    --output (Join-Path $buildDirectory 'helloos.img')
+    --output (Join-Path $buildDirectory 'helloos.img') `
+    --files-root $root
 if ($LASTEXITCODE -ne 0)
 {
     throw 'Failed to build the bootable disk image.'

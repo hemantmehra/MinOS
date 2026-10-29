@@ -31,11 +31,14 @@ not change the system or user execution policy.
 
 QEMU opens the kernel with a BIOS-backed PC. The kernel clears the VGA text
 screen, prints the greeting, and displays a keyboard-driven `minios>` prompt.
+The disk image contains a read-only FAT16 filesystem populated with project
+files and directories. The `ls` command reads and lists its root directory.
 
 Supported shell commands:
 
 - `echo <text>` prints its arguments.
 - `hostname` prints `minios`.
+- `ls` lists files in the current root directory.
 - `clear` clears the screen.
 - `help` lists the available commands.
 
