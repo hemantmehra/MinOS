@@ -31,17 +31,20 @@ not change the system or user execution policy.
 
 QEMU opens the kernel with a BIOS-backed PC. The kernel clears the VGA text
 screen, prints the greeting, and displays a keyboard-driven `minios>` prompt.
-The disk image contains a read-only FAT16 filesystem populated with project
-files and directories. The `ls` command reads and lists its root directory.
+The disk image contains a writable FAT16 filesystem populated with project
+files and directories.
 
 Supported shell commands:
 
 - `echo <text>` prints its arguments.
 - `hostname` prints `minios`.
 - `ls` lists files in the current root directory.
+- `mkdir <name>` creates a directory in the current root directory. Names may
+  contain 1-8 letters, digits, underscores, or hyphens.
 - `clear` clears the screen.
 - `help` lists the available commands.
 
 The build writes its intermediate files and disk image to `build\`. MSVC
 links the kernel at a fixed 32-bit address; keep the loaded code small and
 freestanding, without Windows APIs or C runtime dependencies.
+Rebuilding recreates the disk image and resets runtime-created directories.

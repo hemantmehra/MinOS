@@ -17,6 +17,8 @@
 #define ATA_COMMAND_PORT 0x1F7
 #define ATA_ALT_STATUS_PORT 0x3F6
 #define ATA_READ_SECTORS 0x20
+#define ATA_WRITE_SECTORS 0x30
+#define ATA_FLUSH_CACHE 0xE7
 
 static unsigned short vga_cursor_position(void)
 {
@@ -126,9 +128,16 @@ static void terminal_clear(void)
 
 typedef struct
 {
+    unsigned int volume_end_sector;
+    unsigned int fat_start_sector;
+    unsigned int sectors_per_fat;
+    unsigned int data_start_sector;
     unsigned int root_sector;
     unsigned int root_sector_count;
     unsigned int root_entry_count;
+    unsigned int cluster_count;
+    unsigned char fat_count;
+    unsigned char sectors_per_cluster;
 } FileSystem;
 
 enum FileSystemError
@@ -227,6 +236,61 @@ static int ata_read_sector(unsigned int lba, unsigned char *sector)
     return status != 0 && status != 0xFF && (status & 0x21) == 0;
 }
 
+static int ata_write_sector(unsigned int lba, const unsigned char *sector)
+{
+    unsigned int index;
+    unsigned char status;
+
+    if (lba >= DISK_SECTOR_COUNT || !ata_wait_not_busy(&status))
+    {
+        return 0;
+    }
+
+    __outbyte(ATA_DRIVE_PORT, (unsigned char)(0xE0 | ((lba >> 24) & 0x0F)));
+    ata_delay_400ns();
+    __outbyte(ATA_SECTOR_COUNT_PORT, 1);
+    __outbyte(ATA_LBA_LOW_PORT, (unsigned char)lba);
+    __outbyte(ATA_LBA_MID_PORT, (unsigned char)(lba >> 8));
+    __outbyte(ATA_LBA_HIGH_PORT, (unsigned char)(lba >> 16));
+    __outbyte(ATA_COMMAND_PORT, ATA_WRITE_SECTORS);
+
+    for (index = 0; index < 1000000; ++index)
+    {
+        status = __inbyte(ATA_STATUS_PORT);
+        if (status == 0 || status == 0xFF ||
+            (status & 0x21) != 0)
+        {
+            return 0;
+        }
+        if ((status & 0x88) == 0x08)
+        {
+            break;
+        }
+    }
+
+    if (index == 1000000)
+    {
+        return 0;
+    }
+
+    for (index = 0; index < SECTOR_SIZE; index += 2)
+    {
+        unsigned short word = (unsigned short)(
+            sector[index] | ((unsigned short)sector[index + 1] << 8));
+        __outword(ATA_DATA_PORT, word);
+    }
+
+    ata_delay_400ns();
+    if (!ata_wait_not_busy(&status))
+    {
+        return 0;
+    }
+
+    __outbyte(ATA_COMMAND_PORT, ATA_FLUSH_CACHE);
+    ata_delay_400ns();
+    return ata_wait_not_busy(&status);
+}
+
 static unsigned short read_little_endian_word(const unsigned char *data)
 {
     return (unsigned short)(data[0] | ((unsigned short)data[1] << 8));
@@ -314,6 +378,13 @@ static enum FileSystemError filesystem_mount(
     filesystem->root_sector = first_root_sector;
     filesystem->root_sector_count = root_sectors;
     filesystem->root_entry_count = root_entries;
+    filesystem->volume_end_sector = volume_end;
+    filesystem->fat_start_sector = FILESYSTEM_START_SECTOR + reserved_sectors;
+    filesystem->sectors_per_fat = sectors_per_fat;
+    filesystem->data_start_sector = first_data_sector;
+    filesystem->cluster_count = cluster_count;
+    filesystem->fat_count = (unsigned char)fat_count;
+    filesystem->sectors_per_cluster = sectors_per_cluster;
     return FILESYSTEM_OK;
 }
 
@@ -470,6 +541,356 @@ static void filesystem_list_root(void)
     }
 }
 
+enum CreateDirectoryResult
+{
+    CREATE_DIRECTORY_OK,
+    CREATE_DIRECTORY_INVALID_NAME,
+    CREATE_DIRECTORY_EXISTS,
+    CREATE_DIRECTORY_ROOT_FULL,
+    CREATE_DIRECTORY_DISK_FULL,
+    CREATE_DIRECTORY_IO_ERROR,
+    CREATE_DIRECTORY_FILESYSTEM_ERROR
+};
+
+static int filesystem_make_short_name(
+    const char *name,
+    unsigned char short_name[11])
+{
+    unsigned int index = 0;
+
+    while (index < 11)
+    {
+        short_name[index] = ' ';
+        ++index;
+    }
+
+    index = 0;
+    while (name[index] != '\0')
+    {
+        char character = name[index];
+
+        if (index == 8 ||
+            !((character >= 'a' && character <= 'z') ||
+                (character >= 'A' && character <= 'Z') ||
+                (character >= '0' && character <= '9') ||
+                character == '_' || character == '-'))
+        {
+            return 0;
+        }
+
+        if (character >= 'a' && character <= 'z')
+        {
+            character = (char)(character - 'a' + 'A');
+        }
+
+        short_name[index] = (unsigned char)character;
+        ++index;
+    }
+
+    return index != 0;
+}
+
+static int filesystem_find_root_slot(
+    const FileSystem *filesystem,
+    const unsigned char short_name[11],
+    unsigned int *slot_index,
+    unsigned char *sector)
+{
+    unsigned int sector_index;
+    unsigned int deleted_slot = filesystem->root_entry_count;
+
+    for (sector_index = 0;
+        sector_index < filesystem->root_sector_count;
+        ++sector_index)
+    {
+        unsigned int entry_index;
+
+        if (!ata_read_sector(filesystem->root_sector + sector_index, sector))
+        {
+            return -1;
+        }
+
+        for (entry_index = 0; entry_index < SECTOR_SIZE / 32; ++entry_index)
+        {
+            unsigned int index =
+                sector_index * (SECTOR_SIZE / 32) + entry_index;
+            unsigned char *entry = &sector[entry_index * 32];
+
+            if (index >= filesystem->root_entry_count)
+            {
+                break;
+            }
+
+            if (entry[0] == 0)
+            {
+                *slot_index = deleted_slot == filesystem->root_entry_count
+                    ? index
+                    : deleted_slot;
+                return 1;
+            }
+
+            if (entry[0] == 0xE5)
+            {
+                if (deleted_slot == filesystem->root_entry_count)
+                {
+                    deleted_slot = index;
+                }
+                continue;
+            }
+
+            if (entry[11] != 0x0F && (entry[11] & 0x08) == 0 &&
+                (entry[11] & 0x10) != 0)
+            {
+                unsigned int name_index;
+
+                for (name_index = 0; name_index < 11; ++name_index)
+                {
+                    if (entry[name_index] != short_name[name_index])
+                    {
+                        break;
+                    }
+                }
+
+                if (name_index == 11)
+                {
+                    return 0;
+                }
+            }
+        }
+    }
+
+    if (deleted_slot != filesystem->root_entry_count)
+    {
+        *slot_index = deleted_slot;
+        return 1;
+    }
+
+    return 2;
+}
+
+static int filesystem_find_free_cluster(
+    const FileSystem *filesystem,
+    unsigned char *sector,
+    unsigned short *free_cluster)
+{
+    unsigned int cluster;
+    unsigned int cached_fat_sector = DISK_SECTOR_COUNT;
+
+    for (cluster = 2; cluster < filesystem->cluster_count + 2; ++cluster)
+    {
+        unsigned int fat_offset = cluster * 2;
+        unsigned int lba =
+            filesystem->fat_start_sector + fat_offset / SECTOR_SIZE;
+        unsigned int offset = fat_offset % SECTOR_SIZE;
+
+        if (lba != cached_fat_sector)
+        {
+            if (!ata_read_sector(lba, sector))
+            {
+                return 0;
+            }
+            cached_fat_sector = lba;
+        }
+
+        if (read_little_endian_word(&sector[offset]) == 0)
+        {
+            *free_cluster = (unsigned short)cluster;
+            return 1;
+        }
+    }
+
+    return -1;
+}
+
+static int filesystem_mark_cluster_used(
+    const FileSystem *filesystem,
+    unsigned short cluster,
+    unsigned char *sector)
+{
+    unsigned int fat_offset = (unsigned int)cluster * 2;
+    unsigned int lba =
+        filesystem->fat_start_sector + fat_offset / SECTOR_SIZE;
+    unsigned int offset = fat_offset % SECTOR_SIZE;
+    unsigned int fat_copy;
+
+    if (!ata_read_sector(lba, sector))
+    {
+        return 0;
+    }
+
+    sector[offset] = 0xFF;
+    sector[offset + 1] = 0xFF;
+
+    for (fat_copy = 0; fat_copy < filesystem->fat_count; ++fat_copy)
+    {
+        unsigned int copy_lba =
+            lba + fat_copy * filesystem->sectors_per_fat;
+
+        if (fat_copy != 0 && !ata_read_sector(copy_lba, sector))
+        {
+            return 0;
+        }
+
+        sector[offset] = 0xFF;
+        sector[offset + 1] = 0xFF;
+        if (!ata_write_sector(copy_lba, sector))
+        {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int filesystem_initialize_directory(
+    const FileSystem *filesystem,
+    unsigned short cluster,
+    unsigned char *sector)
+{
+    unsigned int sector_index;
+    unsigned int cluster_start =
+        filesystem->data_start_sector +
+        ((unsigned int)cluster - 2) * filesystem->sectors_per_cluster;
+
+    for (sector_index = 0;
+        sector_index < filesystem->sectors_per_cluster;
+        ++sector_index)
+    {
+        __stosw((unsigned short *)sector, 0, SECTOR_SIZE / 2);
+
+        if (sector_index == 0)
+        {
+            unsigned int index;
+
+            sector[0] = '.';
+            for (index = 1; index < 11; ++index)
+            {
+                sector[index] = ' ';
+            }
+            sector[11] = 0x10;
+            sector[16] = 0x21;
+            sector[24] = 0x21;
+            sector[26] = (unsigned char)cluster;
+            sector[27] = (unsigned char)(cluster >> 8);
+
+            sector[32] = '.';
+            sector[33] = '.';
+            for (index = 34; index < 43; ++index)
+            {
+                sector[index] = ' ';
+            }
+            sector[43] = 0x10;
+            sector[48] = 0x21;
+            sector[56] = 0x21;
+
+            if (!ata_write_sector(cluster_start, sector))
+            {
+                return 0;
+            }
+        }
+        else if (!ata_write_sector(cluster_start + sector_index, sector))
+        {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static enum CreateDirectoryResult filesystem_create_root_directory(
+    const char *name)
+{
+    FileSystem filesystem;
+    unsigned char sector[SECTOR_SIZE];
+    unsigned char short_name[11];
+    unsigned int slot_index;
+    unsigned int slot_lba;
+    unsigned int slot_offset;
+    unsigned short cluster;
+    int slot_result;
+    int cluster_result;
+    enum FileSystemError mount_result;
+
+    if (!filesystem_make_short_name(name, short_name))
+    {
+        return CREATE_DIRECTORY_INVALID_NAME;
+    }
+
+    mount_result = filesystem_mount(&filesystem, sector);
+    if (mount_result != FILESYSTEM_OK)
+    {
+        return CREATE_DIRECTORY_FILESYSTEM_ERROR;
+    }
+
+    slot_index = filesystem.root_entry_count;
+    slot_result = filesystem_find_root_slot(
+        &filesystem, short_name, &slot_index, sector);
+    if (slot_result == -1)
+    {
+        return CREATE_DIRECTORY_IO_ERROR;
+    }
+    if (slot_result == 0)
+    {
+        return CREATE_DIRECTORY_EXISTS;
+    }
+    if (slot_result == 2)
+    {
+        return CREATE_DIRECTORY_ROOT_FULL;
+    }
+
+    cluster_result = filesystem_find_free_cluster(
+        &filesystem, sector, &cluster);
+    if (cluster_result == 0)
+    {
+        return CREATE_DIRECTORY_IO_ERROR;
+    }
+    if (cluster_result < 0)
+    {
+        return CREATE_DIRECTORY_DISK_FULL;
+    }
+
+    if (!filesystem_mark_cluster_used(&filesystem, cluster, sector) ||
+        !filesystem_initialize_directory(&filesystem, cluster, sector))
+    {
+        return CREATE_DIRECTORY_IO_ERROR;
+    }
+
+    slot_lba =
+        filesystem.root_sector + slot_index / (SECTOR_SIZE / 32);
+    slot_offset = (slot_index % (SECTOR_SIZE / 32)) * 32;
+    if (!ata_read_sector(slot_lba, sector))
+    {
+        return CREATE_DIRECTORY_IO_ERROR;
+    }
+
+    {
+        unsigned int index;
+        unsigned char *entry = &sector[slot_offset];
+
+        for (index = 0; index < 32; ++index)
+        {
+            entry[index] = 0;
+        }
+
+        for (index = 0; index < 11; ++index)
+        {
+            entry[index] = short_name[index];
+        }
+        entry[11] = 0x10;
+        entry[16] = 0x21;
+        entry[24] = 0x21;
+        entry[26] = (unsigned char)cluster;
+        entry[27] = (unsigned char)(cluster >> 8);
+    }
+
+    if (!ata_write_sector(slot_lba, sector))
+    {
+        return CREATE_DIRECTORY_IO_ERROR;
+    }
+
+    return CREATE_DIRECTORY_OK;
+}
+
 static char translate_scancode(
     unsigned char scancode,
     unsigned char shift_pressed,
@@ -603,6 +1024,20 @@ static int command_equals(const char *command, const char *expected)
     return *command == '\0' && *expected == '\0';
 }
 
+static int command_token_equals(
+    const char *command,
+    const char *end,
+    const char *expected)
+{
+    while (command != end && *command == *expected)
+    {
+        ++command;
+        ++expected;
+    }
+
+    return command == end && *expected == '\0';
+}
+
 static int is_space(char character)
 {
     return character == ' ' || character == '\t';
@@ -640,7 +1075,8 @@ static void run_command(char *command)
     }
     else if (command_equals(command, "help"))
     {
-        terminal_write("Commands: echo <text>, hostname, ls, clear, help\n");
+        terminal_write(
+            "Commands: echo <text>, hostname, ls, mkdir, clear, help\n");
     }
     else if (command_equals(command, "clear"))
     {
@@ -649,6 +1085,70 @@ static void run_command(char *command)
     else if (command_equals(command, "ls"))
     {
         filesystem_list_root();
+    }
+    else if (command_token_equals(command, argument, "mkdir"))
+    {
+        char *name;
+        char *name_end;
+        enum CreateDirectoryResult result;
+
+        while (is_space(*argument))
+        {
+            ++argument;
+        }
+
+        if (*argument == '\0')
+        {
+            terminal_write("Usage: mkdir <name> (1-8 letters, digits, _ or -)\n");
+            return;
+        }
+
+        name = argument;
+        while (*argument != '\0' && !is_space(*argument))
+        {
+            ++argument;
+        }
+        name_end = argument;
+
+        while (is_space(*argument))
+        {
+            ++argument;
+        }
+
+        if (*argument != '\0')
+        {
+            terminal_write("Usage: mkdir <name> (1-8 letters, digits, _ or -)\n");
+            return;
+        }
+
+        *name_end = '\0';
+        result = filesystem_create_root_directory(name);
+        switch (result)
+        {
+        case CREATE_DIRECTORY_OK:
+            terminal_write("Created directory ");
+            terminal_write(name);
+            terminal_write("\n");
+            break;
+        case CREATE_DIRECTORY_INVALID_NAME:
+            terminal_write("mkdir: name must be 1-8 letters, digits, _ or -.\n");
+            break;
+        case CREATE_DIRECTORY_EXISTS:
+            terminal_write("mkdir: directory already exists.\n");
+            break;
+        case CREATE_DIRECTORY_ROOT_FULL:
+            terminal_write("mkdir: current directory is full.\n");
+            break;
+        case CREATE_DIRECTORY_DISK_FULL:
+            terminal_write("mkdir: filesystem is full.\n");
+            break;
+        case CREATE_DIRECTORY_IO_ERROR:
+            terminal_write("mkdir: disk read or write failed.\n");
+            break;
+        default:
+            terminal_write("mkdir: could not mount the FAT16 filesystem.\n");
+            break;
+        }
     }
     else
     {
