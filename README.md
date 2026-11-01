@@ -44,6 +44,9 @@ Supported shell commands:
 - `clear` clears the screen.
 - `draw` switches to graphics mode and draws a red circle on a white
   background. Press Escape to return to the text shell.
+- `basic` opens a line-numbered BASIC interpreter. Enter numbered lines to
+  write a program, then use `RUN`, `LIST`, `NEW`, or `EXIT`. Programs support
+  `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`, `END`, and integer expressions.
 - `help` lists the available commands.
 
 The build writes its intermediate files and disk image to `build\`. MSVC
