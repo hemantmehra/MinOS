@@ -42,6 +42,8 @@ Supported shell commands:
 - `mkdir <name>` creates a directory in the current root directory. Names may
   contain 1-8 letters, digits, underscores, or hyphens.
 - `clear` clears the screen.
+- `draw` switches to graphics mode and draws a red circle on a white
+  background. Press Escape to return to the text shell.
 - `help` lists the available commands.
 
 The build writes its intermediate files and disk image to `build\`. MSVC
