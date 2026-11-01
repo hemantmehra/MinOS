@@ -2,6 +2,11 @@
 
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
+#define VGA_GRAPHICS_WIDTH 320
+#define VGA_GRAPHICS_HEIGHT 200
+#define VGA_TEXT_FONT_CHARACTERS 128
+#define VGA_TEXT_FONT_HEIGHT 16
+#define VGA_TEXT_FONT_SLOT_SIZE 32
 #define COMMAND_BUFFER_SIZE 128
 #define FILESYSTEM_START_SECTOR 33
 #define DISK_SECTOR_COUNT 32768
@@ -19,6 +24,9 @@
 #define ATA_READ_SECTORS 0x20
 #define ATA_WRITE_SECTORS 0x30
 #define ATA_FLUSH_CACHE 0xE7
+
+static unsigned char vga_text_font[
+    VGA_TEXT_FONT_CHARACTERS * VGA_TEXT_FONT_HEIGHT];
 
 static unsigned short vga_cursor_position(void)
 {
@@ -124,6 +132,219 @@ static void terminal_clear(void)
     }
 
     vga_set_cursor_position(0);
+}
+
+static void vga_write_indexed_registers(
+    unsigned short index_port,
+    unsigned short data_port,
+    const unsigned char *registers,
+    unsigned int count)
+{
+    unsigned int index;
+
+    for (index = 0; index < count; ++index)
+    {
+        __outbyte(index_port, (unsigned char)index);
+        __outbyte(data_port, registers[index]);
+    }
+}
+
+static void vga_write_attribute_registers(const unsigned char *registers)
+{
+    unsigned int index;
+
+    for (index = 0; index < 21; ++index)
+    {
+        __inbyte(0x3DA);
+        __outbyte(0x3C0, (unsigned char)index);
+        __outbyte(0x3C0, registers[index]);
+    }
+
+    __inbyte(0x3DA);
+    __outbyte(0x3C0, 0x20);
+}
+
+static void vga_set_mode(unsigned char graphics)
+{
+    static const unsigned char graphics_sequencer[] =
+        { 0x03, 0x01, 0x0F, 0x00, 0x0E };
+    static const unsigned char text_sequencer[] =
+        { 0x03, 0x00, 0x03, 0x00, 0x02 };
+    static const unsigned char graphics_crtc[] =
+        {
+            0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F,
+            0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x9C, 0x0E, 0x8F, 0x28, 0x40, 0x96, 0xB9, 0xA3,
+            0xFF
+        };
+    static const unsigned char text_crtc[] =
+        {
+            0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F,
+            0x00, 0x4F, 0x0D, 0x0E, 0x00, 0x00, 0x00, 0x00,
+            0x9C, 0x0E, 0x8F, 0x28, 0x1F, 0x96, 0xB9, 0xA3,
+            0xFF
+        };
+    static const unsigned char graphics_controller[] =
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF };
+    static const unsigned char text_controller[] =
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x0E, 0x00, 0xFF };
+    static const unsigned char graphics_attributes[] =
+        {
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+            0x41, 0x00, 0x0F, 0x00, 0x00
+        };
+    static const unsigned char text_attributes[] =
+        {
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+            0x0C, 0x00, 0x0F, 0x08, 0x00
+        };
+    const unsigned char *sequencer =
+        graphics ? graphics_sequencer : text_sequencer;
+    const unsigned char *crtc = graphics ? graphics_crtc : text_crtc;
+    const unsigned char *controller =
+        graphics ? graphics_controller : text_controller;
+    const unsigned char *attributes =
+        graphics ? graphics_attributes : text_attributes;
+
+    __outbyte(0x3C2, graphics ? 0x63 : 0x67);
+    vga_write_indexed_registers(0x3C4, 0x3C5, sequencer, 5);
+    __outbyte(0x3D4, 0x11);
+    __outbyte(0x3D5, (unsigned char)(__inbyte(0x3D5) & 0x7F));
+    vga_write_indexed_registers(0x3D4, 0x3D5, crtc, 25);
+    vga_write_indexed_registers(0x3CE, 0x3CF, controller, 9);
+    vga_write_attribute_registers(attributes);
+}
+
+static void vga_select_font_plane(void)
+{
+    __outbyte(0x3C4, 0);
+    __outbyte(0x3C5, 0x01);
+    __outbyte(0x3C4, 2);
+    __outbyte(0x3C5, 0x04);
+    __outbyte(0x3C4, 4);
+    __outbyte(0x3C5, 0x06);
+    __outbyte(0x3CE, 1);
+    __outbyte(0x3CF, 0x00);
+    __outbyte(0x3CE, 3);
+    __outbyte(0x3CF, 0x00);
+    __outbyte(0x3CE, 4);
+    __outbyte(0x3CF, 0x02);
+    __outbyte(0x3CE, 5);
+    __outbyte(0x3CF, 0x00);
+    __outbyte(0x3CE, 6);
+    __outbyte(0x3CF, 0x04);
+    __outbyte(0x3CE, 8);
+    __outbyte(0x3CF, 0xFF);
+    __outbyte(0x3C4, 0);
+    __outbyte(0x3C5, 0x03);
+}
+
+static void vga_save_text_font(void)
+{
+    volatile unsigned char *font_memory =
+        (volatile unsigned char *)0xA0000;
+    unsigned int character;
+    unsigned int row;
+
+    vga_select_font_plane();
+    for (character = 0; character < VGA_TEXT_FONT_CHARACTERS; ++character)
+    {
+        for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
+        {
+            vga_text_font[
+                character * VGA_TEXT_FONT_HEIGHT + row] =
+                font_memory[character * VGA_TEXT_FONT_SLOT_SIZE + row];
+        }
+    }
+
+    vga_set_mode(0);
+}
+
+static void vga_restore_text_font(void)
+{
+    volatile unsigned char *font_memory =
+        (volatile unsigned char *)0xA0000;
+    unsigned int character;
+    unsigned int row;
+
+    vga_select_font_plane();
+    for (character = 0; character < VGA_TEXT_FONT_CHARACTERS; ++character)
+    {
+        for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
+        {
+            font_memory[character * VGA_TEXT_FONT_SLOT_SIZE + row] =
+                vga_text_font[
+                    character * VGA_TEXT_FONT_HEIGHT + row];
+        }
+    }
+
+    vga_set_mode(0);
+}
+
+static void vga_set_palette_color(
+    unsigned char index,
+    unsigned char red,
+    unsigned char green,
+    unsigned char blue)
+{
+    __outbyte(0x3C8, index);
+    __outbyte(0x3C9, red);
+    __outbyte(0x3C9, green);
+    __outbyte(0x3C9, blue);
+}
+
+static void graphics_plot_circle_point(
+    volatile unsigned char *video_memory,
+    int center_x,
+    int center_y,
+    int x,
+    int y)
+{
+    video_memory[(center_y + y) * VGA_GRAPHICS_WIDTH + center_x + x] = 1;
+    video_memory[(center_y + y) * VGA_GRAPHICS_WIDTH + center_x - x] = 1;
+    video_memory[(center_y - y) * VGA_GRAPHICS_WIDTH + center_x + x] = 1;
+    video_memory[(center_y - y) * VGA_GRAPHICS_WIDTH + center_x - x] = 1;
+    video_memory[(center_y + x) * VGA_GRAPHICS_WIDTH + center_x + y] = 1;
+    video_memory[(center_y + x) * VGA_GRAPHICS_WIDTH + center_x - y] = 1;
+    video_memory[(center_y - x) * VGA_GRAPHICS_WIDTH + center_x + y] = 1;
+    video_memory[(center_y - x) * VGA_GRAPHICS_WIDTH + center_x - y] = 1;
+}
+
+static void graphics_draw_circle(void)
+{
+    volatile unsigned char *video_memory =
+        (volatile unsigned char *)0xA0000;
+    unsigned int index;
+    int x = 60;
+    int y = 0;
+    int error = 1 - x;
+
+    vga_save_text_font();
+    vga_set_mode(1);
+    vga_set_palette_color(0, 63, 63, 63);
+    vga_set_palette_color(1, 63, 0, 0);
+
+    for (index = 0; index < VGA_GRAPHICS_WIDTH * VGA_GRAPHICS_HEIGHT; ++index)
+    {
+        video_memory[index] = 0;
+    }
+
+    while (x >= y)
+    {
+        graphics_plot_circle_point(video_memory, 160, 100, x, y);
+        ++y;
+        if (error < 0)
+        {
+            error += 2 * y + 1;
+        }
+        else
+        {
+            --x;
+            error += 2 * (y - x) + 1;
+        }
+    }
 }
 
 typedef struct
@@ -1004,6 +1225,11 @@ static char keyboard_read_character(
             return '\n';
         }
 
+        if (scancode == 0x01)
+        {
+            return '\x1B';
+        }
+
         if (scancode == 0x0E)
         {
             return '\b';
@@ -1043,7 +1269,11 @@ static int is_space(char character)
     return character == ' ' || character == '\t';
 }
 
-static void run_command(char *command)
+static void run_command(
+    char *command,
+    unsigned char *shift_pressed,
+    unsigned char *caps_lock,
+    unsigned char *extended)
 {
     char *argument;
 
@@ -1076,10 +1306,27 @@ static void run_command(char *command)
     else if (command_equals(command, "help"))
     {
         terminal_write(
-            "Commands: echo <text>, hostname, ls, mkdir, clear, help\n");
+            "Commands: echo <text>, hostname, ls, mkdir, clear, draw, help\n");
     }
     else if (command_equals(command, "clear"))
     {
+        terminal_clear();
+    }
+    else if (command_equals(command, "draw"))
+    {
+        char character;
+
+        graphics_draw_circle();
+        do
+        {
+            character = keyboard_read_character(
+                shift_pressed, caps_lock, extended);
+        } while (character != '\x1B');
+
+        vga_set_mode(0);
+        vga_restore_text_font();
+        vga_set_palette_color(0, 0, 0, 0);
+        vga_set_palette_color(1, 0, 0, 42);
         terminal_clear();
     }
     else if (command_equals(command, "ls"))
@@ -1206,6 +1453,7 @@ void __cdecl kernel_main(void)
         }
 
         command[length] = '\0';
-        run_command(command);
+        run_command(
+            command, &shift_pressed, &caps_lock, &extended);
     }
 }
