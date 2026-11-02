@@ -19,15 +19,12 @@ project such as GRUB.
 
 ## Build and run
 
-From PowerShell in this directory:
+From a terminal in this directory:
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\run.ps1
+```text
+python build.py
+python run.py
 ```
-
-The execution-policy bypass applies only to each PowerShell process; it does
-not change the system or user execution policy.
 
 QEMU opens the kernel with a BIOS-backed PC. The kernel clears the VGA text
 screen, prints the greeting, and displays a keyboard-driven `minios>` prompt.
