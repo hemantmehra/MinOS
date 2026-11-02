@@ -35,13 +35,16 @@ and directories.
 Kernel code is organized by subsystem: `kernel.c` handles shell dispatch,
 `video.c` renders the VGA terminal, `keyboard.c` reads keyboard input,
 `filesystem.c` implements FAT16 access, `basic.c` contains the BASIC
-interpreter, and `shell_utils.c` provides shared shell helpers. Shared
-interfaces are declared in `kernel.h`.
+interpreter, `interrupts.c` sets up the IDT and keyboard IRQ, `time.c` reads
+the CMOS real-time clock, and `shell_utils.c` provides shared shell helpers.
+CPU exceptions halt safely, keyboard input is delivered through IRQ1, and
+shared interfaces are declared in `kernel.h`.
 
 Supported shell commands:
 
 - `echo <text>` prints its arguments.
 - `hostname` prints `minios`.
+- `time` displays the current UTC date and time from the real-time clock.
 - `ls` lists files in the current root directory.
 - `mkdir <name>` creates a directory in the current root directory. Names may
   contain 1-8 letters, digits, underscores, or hyphens.

@@ -1,6 +1,31 @@
 #include <intrin.h>
 #include "kernel.h"
 
+#define KEYBOARD_QUEUE_SIZE 64
+#define KEYBOARD_QUEUE_MASK (KEYBOARD_QUEUE_SIZE - 1)
+
+static volatile unsigned char keyboard_queue[KEYBOARD_QUEUE_SIZE];
+static volatile unsigned char keyboard_queue_read;
+static volatile unsigned char keyboard_queue_write;
+
+static void keyboard_enqueue_scancode(unsigned char scancode)
+{
+    unsigned char next =
+        (unsigned char)((keyboard_queue_write + 1) & KEYBOARD_QUEUE_MASK);
+
+    if (next != keyboard_queue_read)
+    {
+        keyboard_queue[keyboard_queue_write] = scancode;
+        keyboard_queue_write = next;
+    }
+}
+
+void keyboard_handle_irq(void)
+{
+    keyboard_enqueue_scancode(__inbyte(0x60));
+    __outbyte(0x20, 0x20);
+}
+
 static char translate_scancode(
     unsigned char scancode,
     unsigned char shift_pressed,
@@ -65,14 +90,14 @@ char keyboard_read_character(
     for (;;)
     {
         unsigned char scancode;
-        unsigned char status = __inbyte(0x64);
 
-        if ((status & 0x01) == 0)
+        while (keyboard_queue_read == keyboard_queue_write)
         {
-            continue;
         }
 
-        scancode = __inbyte(0x60);
+        scancode = keyboard_queue[keyboard_queue_read];
+        keyboard_queue_read = (unsigned char)(
+            (keyboard_queue_read + 1) & KEYBOARD_QUEUE_MASK);
 
         if (*extended)
         {
@@ -127,4 +152,3 @@ char keyboard_read_character(
         return translate_scancode(scancode, *shift_pressed, *caps_lock);
     }
 }
-

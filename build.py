@@ -73,6 +73,8 @@ def run_msvc(developer_command):
         "video.c",
         "filesystem.c",
         "keyboard.c",
+        "interrupts.c",
+        "time.c",
         "shell_utils.c",
         "basic.c",
     )

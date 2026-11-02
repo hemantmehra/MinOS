@@ -20,6 +20,9 @@ void terminal_write_unsigned(unsigned int value);
 void terminal_clear(void);
 void video_initialize(void);
 void video_draw_circle(void);
+void interrupts_initialize(void);
+void clock_write_time(void);
+void keyboard_handle_irq(void);
 
 int is_space(char character);
 int command_equals(const char *command, const char *expected);

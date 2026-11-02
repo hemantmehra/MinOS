@@ -34,10 +34,14 @@ static void run_command(
     {
         terminal_write("minios\n");
     }
+    else if (command_equals(command, "time"))
+    {
+        clock_write_time();
+    }
     else if (command_equals(command, "help"))
     {
         terminal_write(
-            "Commands: echo <text>, hostname, ls, mkdir, clear, draw, basic, help\n");
+            "Commands: echo <text>, hostname, time, ls, mkdir, clear, draw, basic, help\n");
     }
     else if (command_equals(command, "clear"))
     {
@@ -146,6 +150,7 @@ void __cdecl kernel_main(void)
     unsigned char extended = 0;
 
     video_initialize();
+    interrupts_initialize();
     terminal_write("Hello, world!\n");
     terminal_write("Type help for available commands.\n");
 
