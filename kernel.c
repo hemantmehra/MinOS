@@ -13,6 +13,11 @@ static void run_command(
         ++command;
     }
 
+    if (*command == '\0')
+    {
+        return;
+    }
+
     argument = command;
     while (*argument != '\0' && !is_space(*argument))
     {

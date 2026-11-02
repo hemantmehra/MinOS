@@ -130,6 +130,21 @@ def main():
     if result.returncode != 0:
         raise RuntimeError("NASM failed to assemble HELLO.EXE.")
 
+    countdown_executable = BUILD_DIRECTORY / "COUNTDOWN.EXE"
+    result = subprocess.run(
+        [
+            str(nasm),
+            "-f",
+            "bin",
+            "-o",
+            str(countdown_executable),
+            str(ROOT / "programs" / "countdown.asm"),
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("NASM failed to assemble COUNTDOWN.EXE.")
+
     paint_executable = BUILD_DIRECTORY / "PAINT.EXE"
     result = subprocess.run(
         [
@@ -161,6 +176,9 @@ def main():
             "--extra-file",
             "HELLO.EXE",
             str(executable),
+            "--extra-file",
+            "COUNTDOWN.EXE",
+            str(countdown_executable),
             "--extra-file",
             "PAINT.EXE",
             str(paint_executable),
