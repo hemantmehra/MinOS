@@ -40,8 +40,21 @@ the CMOS real-time clock, `memory.c` initializes x86 paging and manages 4 KiB
 physical pages, and `shell_utils.c` provides shared shell helpers. Paging
 identity-maps the first 16 MiB and provides APIs to allocate/free physical
 pages and map, unmap, and translate virtual addresses. CPU exceptions halt
-safely, keyboard input is delivered through IRQ1, and shared interfaces are
-declared in `kernel.h`.
+safely, keyboard input is delivered through IRQ1, and the PIT timer drives
+the round-robin scheduler in `process.c`. The shell and each loaded process
+run as one schedulable thread. The scheduler saves and restores complete
+general-register, segment-register, and interrupt contexts, and programs use
+`int 0x80` to print or exit. Kernel and sample programs are built for IA-32
+integer code without SIMD or floating-point state.
+
+Processes currently run in ring 0 and share the kernel address space; they
+are preemptively scheduled but are not privilege-isolated. Root-directory
+executables use the MinOS `MEXE` format: a 12-byte header (`MEXE`, 32-bit
+image size, and 32-bit entry offset) followed by flat 32-bit x86 code. The
+kernel loads images up to 64 KiB. `programs/hello.asm` is assembled as
+`HELLO.EXE` during the build and included in the FAT16 image. Shared
+interfaces are declared in `kernel.h`. The print call uses `EAX=1` and a
+null-terminated string pointer in `EBX`; `EAX=0` exits the process.
 
 Supported shell commands:
 
@@ -49,6 +62,9 @@ Supported shell commands:
 - `hostname` prints `minios`.
 - `time` displays the current UTC date and time from the real-time clock.
 - `mem` reports free 4 KiB pages and tests virtual page mapping.
+- `ps` lists the shell and active process/thread IDs and states.
+- Enter an executable name such as `HELLO.EXE` (or `HELLO`) to start it.
+  The included program prints a hello message and exits.
 - `ls` lists files in the current root directory.
 - `mkdir <name>` creates a directory in the current root directory. Names may
   contain 1-8 letters, digits, underscores, or hyphens.

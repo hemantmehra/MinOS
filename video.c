@@ -50,7 +50,18 @@ static void vga_scroll(void)
 
 void terminal_write_character(char character)
 {
-    unsigned short position = vga_cursor_position();
+    unsigned int flags;
+    unsigned short position;
+
+    __asm
+    {
+        pushfd
+        pop eax
+        mov flags, eax
+        cli
+    }
+
+    position = vga_cursor_position();
 
     if (character == '\r')
     {
@@ -94,6 +105,12 @@ void terminal_write_character(char character)
     {
         __outbyte(0xE9, '\b');
     }
+
+    __asm
+    {
+        push flags
+        popfd
+    }
 }
 
 void terminal_write(const char *text)
@@ -107,7 +124,16 @@ void terminal_write(const char *text)
 
 void terminal_clear(void)
 {
+    unsigned int flags;
     unsigned int index;
+
+    __asm
+    {
+        pushfd
+        pop eax
+        mov flags, eax
+        cli
+    }
 
     for (index = 0; index < VGA_WIDTH * VGA_HEIGHT; ++index)
     {
@@ -116,6 +142,12 @@ void terminal_clear(void)
 
     vga_fill_screen(0);
     vga_set_cursor_position(0);
+
+    __asm
+    {
+        push flags
+        popfd
+    }
 }
 
 static void vga_write_indexed_registers(

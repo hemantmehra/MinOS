@@ -75,6 +75,7 @@ def run_msvc(developer_command):
         "keyboard.c",
         "interrupts.c",
         "memory.c",
+        "process.c",
         "time.c",
         "shell_utils.c",
         "basic.c",
@@ -83,7 +84,7 @@ def run_msvc(developer_command):
     object_files = " ".join(f"{Path(source).stem}.obj" for source in sources)
     compile_command = (
         f'call "{developer_command}" -arch=x86 -host_arch=x64 >nul && '
-        f"cl /nologo /c /TC /GS- /Oi /O1 /Zl {source_paths} "
+        f"cl /nologo /c /TC /GS- /Oi /O1 /Zl /arch:IA32 {source_paths} "
         "&& link /nologo /nodefaultlib /machine:x86 /subsystem:native "
         "/entry:kernel_main /base:0x10000 /fixed /filealign:512 "
         "/merge:.rdata=.text /merge:.data=.text /section:.text,ERW "
@@ -114,6 +115,21 @@ def main():
     if result.returncode != 0:
         raise RuntimeError("NASM failed to assemble the boot sector.")
 
+    executable = BUILD_DIRECTORY / "HELLO.EXE"
+    result = subprocess.run(
+        [
+            str(nasm),
+            "-f",
+            "bin",
+            "-o",
+            str(executable),
+            str(ROOT / "programs" / "hello.asm"),
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("NASM failed to assemble HELLO.EXE.")
+
     python = sys.executable
     result = subprocess.run(
         [
@@ -127,6 +143,9 @@ def main():
             str(BUILD_DIRECTORY / "helloos.img"),
             "--files-root",
             str(ROOT),
+            "--extra-file",
+            "HELLO.EXE",
+            str(executable),
         ],
         check=False,
     )

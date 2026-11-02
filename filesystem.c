@@ -455,6 +455,235 @@ static int filesystem_make_short_name(
     return index != 0;
 }
 
+static int filesystem_make_file_name(
+    const char *name,
+    unsigned char short_name[11])
+{
+    unsigned int base_length = 0;
+    unsigned int extension_length = 0;
+    unsigned int index;
+    int in_extension = 0;
+
+    for (index = 0; index < 11; ++index)
+    {
+        short_name[index] = ' ';
+    }
+
+    for (index = 0; name[index] != '\0'; ++index)
+    {
+        char character = name[index];
+        unsigned int *length = in_extension
+            ? &extension_length
+            : &base_length;
+        unsigned int limit = in_extension ? 3 : 8;
+        unsigned int destination = in_extension
+            ? 8 + extension_length
+            : base_length;
+
+        if (character == '.' && !in_extension)
+        {
+            if (base_length == 0)
+            {
+                return 0;
+            }
+            in_extension = 1;
+            continue;
+        }
+
+        if (!((character >= 'a' && character <= 'z') ||
+                (character >= 'A' && character <= 'Z') ||
+                (character >= '0' && character <= '9') ||
+                character == '_' || character == '-'))
+        {
+            return 0;
+        }
+        if (*length >= limit)
+        {
+            return 0;
+        }
+        if (character >= 'a' && character <= 'z')
+        {
+            character = (char)(character - 'a' + 'A');
+        }
+        short_name[destination] = (unsigned char)character;
+        ++*length;
+    }
+
+    if (base_length == 0 || (in_extension && extension_length == 0))
+    {
+        return 0;
+    }
+
+    if (!in_extension)
+    {
+        short_name[8] = 'E';
+        short_name[9] = 'X';
+        short_name[10] = 'E';
+    }
+    return 1;
+}
+
+enum FileReadResult filesystem_read_root_file(
+    const char *name,
+    unsigned char *buffer,
+    unsigned int buffer_size,
+    unsigned int *file_size)
+{
+    FileSystem filesystem;
+    unsigned char sector[SECTOR_SIZE];
+    unsigned char short_name[11];
+    volatile unsigned char *output_buffer = buffer;
+    unsigned int sector_index;
+    unsigned short first_cluster = 0;
+    unsigned int size = 0;
+    int found = 0;
+    enum FileSystemError mount_result;
+
+    if (buffer == 0 || file_size == 0 ||
+        !filesystem_make_file_name(name, short_name))
+    {
+        return FILE_READ_INVALID_NAME;
+    }
+
+    mount_result = filesystem_mount(&filesystem, sector);
+    if (mount_result != FILESYSTEM_OK)
+    {
+        return mount_result == FILESYSTEM_DISK_READ_ERROR
+            ? FILE_READ_DISK_ERROR
+            : FILE_READ_CORRUPT;
+    }
+
+    for (sector_index = 0;
+        sector_index < filesystem.root_sector_count && !found;
+        ++sector_index)
+    {
+        unsigned int entry_index;
+
+        if (!ata_read_sector(
+            filesystem.root_sector + sector_index, sector))
+        {
+            return FILE_READ_DISK_ERROR;
+        }
+
+        for (entry_index = 0; entry_index < SECTOR_SIZE / 32; ++entry_index)
+        {
+            const unsigned char *entry = &sector[entry_index * 32];
+            unsigned int name_index;
+            int name_matches = 1;
+
+            if (entry[0] == 0)
+            {
+                break;
+            }
+            if (entry[0] == 0xE5 ||
+                (entry[11] & 0x18) != 0 ||
+                entry[11] == 0x0F)
+            {
+                continue;
+            }
+
+            name_matches = 1;
+            for (name_index = 0; name_index < sizeof(short_name); ++name_index)
+            {
+                if (entry[name_index] != short_name[name_index])
+                {
+                    name_matches = 0;
+                    break;
+                }
+            }
+            if (name_matches)
+            {
+                first_cluster = read_little_endian_word(&entry[26]);
+                size = read_little_endian_dword(&entry[28]);
+                found = 1;
+                break;
+            }
+        }
+    }
+
+    if (!found)
+    {
+        return FILE_READ_NOT_FOUND;
+    }
+    if (size > buffer_size)
+    {
+        return FILE_READ_TOO_LARGE;
+    }
+    *file_size = size;
+    if (size == 0)
+    {
+        return FILE_READ_OK;
+    }
+
+    {
+        unsigned int remaining = size;
+        unsigned int clusters_read = 0;
+        unsigned short cluster = first_cluster;
+
+        while (remaining != 0)
+        {
+            unsigned int cluster_sector;
+
+            if (cluster < 2 ||
+                cluster >= filesystem.cluster_count + 2 ||
+                clusters_read >= filesystem.cluster_count)
+            {
+                return FILE_READ_CORRUPT;
+            }
+            ++clusters_read;
+
+            for (cluster_sector = 0;
+                cluster_sector < filesystem.sectors_per_cluster &&
+                    remaining != 0;
+                ++cluster_sector)
+            {
+                unsigned int lba =
+                    filesystem.data_start_sector +
+                    ((unsigned int)cluster - 2) *
+                        filesystem.sectors_per_cluster +
+                    cluster_sector;
+                unsigned int bytes_to_copy =
+                    remaining < SECTOR_SIZE ? remaining : SECTOR_SIZE;
+                unsigned int byte_index;
+
+                if (!ata_read_sector(lba, sector))
+                {
+                    return FILE_READ_DISK_ERROR;
+                }
+                for (byte_index = 0;
+                    byte_index < bytes_to_copy;
+                    ++byte_index)
+                {
+                    output_buffer[size - remaining + byte_index] =
+                        sector[byte_index];
+                }
+                remaining -= bytes_to_copy;
+            }
+
+            if (remaining != 0)
+            {
+                unsigned int fat_offset = (unsigned int)cluster * 2;
+                unsigned int fat_lba =
+                    filesystem.fat_start_sector +
+                    fat_offset / SECTOR_SIZE;
+
+                if (!ata_read_sector(fat_lba, sector))
+                {
+                    return FILE_READ_DISK_ERROR;
+                }
+                cluster = read_little_endian_word(
+                    &sector[fat_offset % SECTOR_SIZE]);
+                if (cluster >= 0xFFF8 || cluster < 2)
+                {
+                    return FILE_READ_CORRUPT;
+                }
+            }
+        }
+    }
+
+    return FILE_READ_OK;
+}
+
 static int filesystem_find_root_slot(
     const FileSystem *filesystem,
     const unsigned char short_name[11],

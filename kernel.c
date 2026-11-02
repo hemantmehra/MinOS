@@ -40,7 +40,7 @@ static void run_command(
     }
     else if (command_equals(command, "mem"))
     {
-        const unsigned int test_virtual_address = 0x40000000;
+        const unsigned int test_virtual_address = 0x7F000000;
         const unsigned int test_value = 0x4D454D31;
         unsigned int physical_address = memory_allocate_page();
         unsigned int translated_address;
@@ -88,7 +88,7 @@ static void run_command(
     else if (command_equals(command, "help"))
     {
         terminal_write(
-            "Commands: echo <text>, hostname, time, mem, ls, mkdir, clear, draw, basic, help\n");
+            "Commands: echo <text>, hostname, time, mem, ps, ls, mkdir, clear, draw, basic, help\n");
     }
     else if (command_equals(command, "clear"))
     {
@@ -116,6 +116,10 @@ static void run_command(
     else if (command_equals(command, "ls"))
     {
         filesystem_list_root();
+    }
+    else if (command_equals(command, "ps"))
+    {
+        process_list();
     }
     else if (command_token_equals(command, argument, "mkdir"))
     {
@@ -183,9 +187,59 @@ static void run_command(
     }
     else
     {
-        terminal_write("Unknown command: ");
-        terminal_write(command);
-        terminal_write("\n");
+        unsigned int process_id;
+        enum ProcessStartResult result;
+        char *name_end = argument;
+
+        while (is_space(*argument))
+        {
+            ++argument;
+        }
+        if (*argument != '\0')
+        {
+            terminal_write("Unknown command or executable arguments: ");
+            terminal_write(command);
+            terminal_write("\n");
+            return;
+        }
+
+        *name_end = '\0';
+        result = process_start(command, &process_id);
+        switch (result)
+        {
+        case PROCESS_START_OK:
+            break;
+        case PROCESS_START_INVALID_NAME:
+            terminal_write("run: use an 8.3 executable name, such as HELLO.EXE.\n");
+            break;
+        case PROCESS_START_NOT_FOUND:
+            terminal_write("run: executable not found: ");
+            terminal_write(command);
+            terminal_write("\n");
+            break;
+        case PROCESS_START_TOO_LARGE:
+            terminal_write("run: executable exceeds the 64 KiB limit.\n");
+            break;
+        case PROCESS_START_DISK_ERROR:
+            terminal_write("run: failed to read executable from disk.\n");
+            break;
+        case PROCESS_START_INVALID_EXECUTABLE:
+            terminal_write("run: invalid MEXE executable.\n");
+            break;
+        case PROCESS_START_NO_MEMORY:
+            terminal_write("run: could not allocate executable memory.\n");
+            break;
+        default:
+            if (result == PROCESS_START_LIMIT_REACHED)
+            {
+                terminal_write("run: process limit reached (8 processes).\n");
+            }
+            else
+            {
+                terminal_write("run: failed to release process mappings.\n");
+            }
+            break;
+        }
     }
 }
 
@@ -198,6 +252,7 @@ void __cdecl kernel_main(void)
 
     memory_initialize();
     video_initialize();
+    processes_initialize();
     interrupts_initialize();
     terminal_write("Hello, world!\n");
     terminal_write("Type help for available commands.\n");

@@ -152,7 +152,7 @@ def encode_directory(directory, parent_cluster):
     return b"".join(entries)
 
 
-def populate_fat16(volume, files_root):
+def populate_fat16(volume, files_root, extra_files=()):
     total_sectors = len(volume) // SECTOR_SIZE
     root_sectors = math.ceil(FAT16_ROOT_ENTRY_COUNT * 32 / SECTOR_SIZE)
     fat_sectors = 1
@@ -179,6 +179,15 @@ def populate_fat16(volume, files_root):
     root = Directory(None, b"MINIOS     ")
     next_cluster = 2
     children = build_directory(files_root, root.short_name).children
+    used_names = {child.short_name for child in children}
+    for name, path in extra_files:
+        short_name = create_short_name(name, set())
+        if short_name in used_names:
+            raise ValueError(f"Extra disk file {name!r} conflicts with a workspace file.")
+        if not path.is_file():
+            raise ValueError(f"Extra disk file does not exist: {path}")
+        used_names.add(short_name)
+        children.append(File(path, short_name, path.read_bytes()))
 
     def allocate_directory(directory, parent_cluster):
         nonlocal next_cluster
@@ -342,7 +351,7 @@ def read_pe_kernel(path):
     return payload, KERNEL_BASE + entry_rva
 
 
-def build_disk(boot_path, kernel_path, output_path, files_root):
+def build_disk(boot_path, kernel_path, output_path, files_root, extra_files=()):
     boot = bytearray(boot_path.read_bytes())
     if len(boot) != SECTOR_SIZE:
         raise ValueError(f"The boot sector must be exactly {SECTOR_SIZE} bytes.")
@@ -365,6 +374,7 @@ def build_disk(boot_path, kernel_path, output_path, files_root):
     populate_fat16(
         memoryview(disk)[filesystem_start:],
         files_root,
+        extra_files,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(disk)
@@ -380,12 +390,20 @@ def main():
     parser.add_argument("--kernel", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--files-root", type=Path, required=True)
+    parser.add_argument(
+        "--extra-file",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("NAME", "PATH"),
+    )
     arguments = parser.parse_args()
     build_disk(
         arguments.boot,
         arguments.kernel,
         arguments.output,
         arguments.files_root,
+        [(name, Path(path)) for name, path in arguments.extra_file],
     )
 
 
