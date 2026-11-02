@@ -68,14 +68,23 @@ def find_visual_studio():
 
 
 def run_msvc(developer_command):
-    kernel_source = ROOT / "kernel.c"
+    sources = (
+        "kernel.c",
+        "video.c",
+        "filesystem.c",
+        "keyboard.c",
+        "shell_utils.c",
+        "basic.c",
+    )
+    source_paths = " ".join(f'"{ROOT / source}"' for source in sources)
+    object_files = " ".join(f"{Path(source).stem}.obj" for source in sources)
     compile_command = (
         f'call "{developer_command}" -arch=x86 -host_arch=x64 >nul && '
-        f'cl /nologo /c /TC /GS- /Oi /O1 /Zl /Fo:kernel.obj "{kernel_source}" '
+        f"cl /nologo /c /TC /GS- /Oi /O1 /Zl {source_paths} "
         "&& link /nologo /nodefaultlib /machine:x86 /subsystem:native "
         "/entry:kernel_main /base:0x10000 /fixed /filealign:512 "
         "/merge:.rdata=.text /merge:.data=.text /section:.text,ERW "
-        "/incremental:no /out:kernel.exe kernel.obj"
+        f"/incremental:no /out:kernel.exe {object_files}"
     )
     result = subprocess.run(
         compile_command, cwd=BUILD_DIRECTORY, shell=True, check=False

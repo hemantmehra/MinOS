@@ -32,6 +32,12 @@ It prints the greeting and displays a keyboard-driven `minios>` prompt. The
 disk image contains a writable FAT16 filesystem populated with project files
 and directories.
 
+Kernel code is organized by subsystem: `kernel.c` handles shell dispatch,
+`video.c` renders the VGA terminal, `keyboard.c` reads keyboard input,
+`filesystem.c` implements FAT16 access, `basic.c` contains the BASIC
+interpreter, and `shell_utils.c` provides shared shell helpers. Shared
+interfaces are declared in `kernel.h`.
+
 Supported shell commands:
 
 - `echo <text>` prints its arguments.
