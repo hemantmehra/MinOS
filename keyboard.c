@@ -22,7 +22,10 @@ static void keyboard_enqueue_scancode(unsigned char scancode)
 
 void keyboard_handle_irq(void)
 {
-    keyboard_enqueue_scancode(__inbyte(0x60));
+    unsigned char scancode = __inbyte(0x60);
+
+    process_keyboard_scancode(scancode);
+    keyboard_enqueue_scancode(scancode);
     __outbyte(0x20, 0x20);
 }
 

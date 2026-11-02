@@ -417,7 +417,8 @@ static void graphics_plot_circle_point(
     int center_x,
     int center_y,
     int x,
-    int y)
+    int y,
+    unsigned char color)
 {
     int points[8][2] =
         {
@@ -438,21 +439,24 @@ static void graphics_plot_circle_point(
         int point_y = points[index][1];
 
         vga_framebuffer[
-            point_y * VGA_GRAPHICS_WIDTH + point_x] = 12;
+            point_y * VGA_GRAPHICS_WIDTH + point_x] = color;
     }
 }
 
-void video_draw_circle(void)
+static void graphics_draw_circle(
+    int center_x,
+    int center_y,
+    int radius,
+    unsigned char color)
 {
-    int x = 140;
+    int x = radius;
     int y = 0;
     int error = 1 - x;
 
-    vga_fill_screen(15);
-
     while (x >= y)
     {
-        graphics_plot_circle_point(640, 360, x, y);
+        graphics_plot_circle_point(
+            center_x, center_y, x, y, color);
         ++y;
         if (error < 0)
         {
@@ -464,6 +468,17 @@ void video_draw_circle(void)
             error += 2 * (y - x) + 1;
         }
     }
+}
+
+void video_draw_circle(void)
+{
+    vga_fill_screen(15);
+    graphics_draw_circle(640, 360, 140, 12);
+}
+
+void video_terminal_restore(void)
+{
+    vga_render_terminal();
 }
 
 void terminal_write_unsigned(unsigned int value)

@@ -130,6 +130,21 @@ def main():
     if result.returncode != 0:
         raise RuntimeError("NASM failed to assemble HELLO.EXE.")
 
+    paint_executable = BUILD_DIRECTORY / "PAINT.EXE"
+    result = subprocess.run(
+        [
+            str(nasm),
+            "-f",
+            "bin",
+            "-o",
+            str(paint_executable),
+            str(ROOT / "programs" / "paint.asm"),
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("NASM failed to assemble PAINT.EXE.")
+
     python = sys.executable
     result = subprocess.run(
         [
@@ -146,6 +161,9 @@ def main():
             "--extra-file",
             "HELLO.EXE",
             str(executable),
+            "--extra-file",
+            "PAINT.EXE",
+            str(paint_executable),
         ],
         check=False,
     )

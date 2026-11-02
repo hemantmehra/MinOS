@@ -54,6 +54,10 @@ kernel loads images up to 64 KiB. `programs/hello.asm` is assembled as
 `HELLO.EXE` during the build and included in the FAT16 image. Shared
 interfaces are declared in `kernel.h`. The print call uses `EAX=1` and a
 null-terminated string pointer in `EBX`; `EAX=0` exits the process.
+`programs/paint.asm` is assembled as `PAINT.EXE`; execute `PAINT.EXE` to draw
+a red circle, green triangle, and blue rectangle. Press Escape to exit and
+restore the shell display. Applications can poll keyboard scancodes with
+`EAX=2` (returns a scancode in `EAX`, or zero when no key is available).
 
 Supported shell commands:
 
@@ -64,6 +68,8 @@ Supported shell commands:
 - `ps` lists the shell and active process/thread IDs and states.
 - Enter an executable name such as `HELLO.EXE` (or `HELLO`) to start it.
   The included program prints a hello message and exits.
+- Enter `PAINT.EXE` to run the included drawing program. Press Escape to
+  return to the shell.
 - `ls` lists files in the current root directory.
 - `mkdir <name>` creates a directory in the current root directory. Names may
   contain 1-8 letters, digits, underscores, or hyphens.

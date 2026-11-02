@@ -9,7 +9,10 @@
 #define PROCESS_SLOT_SIZE 0x00200000
 #define PROCESS_BASE 0x40000000
 #define PROCESS_SYSCALL_PRINT 1
+#define PROCESS_SYSCALL_KEYBOARD_READ 2
 #define PROCESS_SYSCALL_EXIT 0
+#define PROCESS_KEYBOARD_QUEUE_SIZE 16
+#define PROCESS_KEYBOARD_QUEUE_MASK (PROCESS_KEYBOARD_QUEUE_SIZE - 1)
 
 enum TaskState
 {
@@ -51,6 +54,9 @@ typedef struct
     unsigned int code_pages[EXECUTABLE_PAGE_COUNT];
     unsigned int stack_page_count;
     unsigned int stack_pages[PROCESS_STACK_PAGE_COUNT];
+    unsigned char keyboard_events[PROCESS_KEYBOARD_QUEUE_SIZE];
+    unsigned char keyboard_event_read;
+    unsigned char keyboard_event_write;
     char name[13];
 } Process;
 
@@ -164,6 +170,7 @@ static void process_cleanup_terminated(void)
             if (process_release(&processes[slot], slot))
             {
                 processes[slot].state = TASK_UNUSED;
+                video_terminal_restore();
             }
             else
             {
@@ -237,6 +244,8 @@ void processes_initialize(void)
         processes[slot].saved_stack = 0;
         processes[slot].code_page_count = 0;
         processes[slot].stack_page_count = 0;
+        processes[slot].keyboard_event_read = 0;
+        processes[slot].keyboard_event_write = 0;
     }
 
     processes[0].state = TASK_ACTIVE;
@@ -287,6 +296,8 @@ enum ProcessStartResult process_start(
     process->entry_offset = 0;
     process->code_page_count = 0;
     process->stack_page_count = 0;
+    process->keyboard_event_read = 0;
+    process->keyboard_event_write = 0;
 
     for (index = 0; index < EXECUTABLE_PAGE_COUNT; ++index)
     {
@@ -494,6 +505,21 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             process_terminate_current();
         }
     }
+    else if (syscall_number == PROCESS_SYSCALL_KEYBOARD_READ)
+    {
+        if (process->keyboard_event_read != process->keyboard_event_write)
+        {
+            saved_stack[11] =
+                process->keyboard_events[process->keyboard_event_read];
+            process->keyboard_event_read = (unsigned char)(
+                (process->keyboard_event_read + 1) &
+                PROCESS_KEYBOARD_QUEUE_MASK);
+        }
+        else
+        {
+            saved_stack[11] = 0;
+        }
+    }
     else if (syscall_number == PROCESS_SYSCALL_EXIT)
     {
         process_terminate_current();
@@ -505,6 +531,37 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     }
 
     return (unsigned int)processes[current_task].saved_stack;
+}
+
+void process_keyboard_scancode(unsigned char scancode)
+{
+    unsigned int slot;
+
+    if ((scancode & 0x80) != 0)
+    {
+        return;
+    }
+
+    for (slot = 1; slot < TASK_LIMIT; ++slot)
+    {
+        Process *process = &processes[slot];
+        unsigned char next;
+
+        if (process->state != TASK_ACTIVE)
+        {
+            continue;
+        }
+
+        next = (unsigned char)(
+            (process->keyboard_event_write + 1) &
+            PROCESS_KEYBOARD_QUEUE_MASK);
+        if (next != process->keyboard_event_read)
+        {
+            process->keyboard_events[process->keyboard_event_write] =
+                scancode;
+            process->keyboard_event_write = next;
+        }
+    }
 }
 
 void process_list(void)

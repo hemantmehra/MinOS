@@ -42,6 +42,7 @@ void terminal_write(const char *text);
 void terminal_write_prompt(const char *text);
 void terminal_write_unsigned(unsigned int value);
 void terminal_clear(void);
+void video_terminal_restore(void);
 void video_initialize(void);
 void video_draw_circle(void);
 void interrupts_initialize(void);
@@ -52,6 +53,7 @@ enum ProcessStartResult process_start(
 void process_list(void);
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack);
 unsigned int __cdecl process_system_call(unsigned int *saved_stack);
+void process_keyboard_scancode(unsigned char scancode);
 void clock_write_time(void);
 void keyboard_handle_irq(void);
 void memory_initialize(void);
