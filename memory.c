@@ -138,7 +138,6 @@ int memory_map_page(
     if ((virtual_address & (PAGE_SIZE - 1)) != 0 ||
         (physical_address & (PAGE_SIZE - 1)) != 0 ||
         virtual_address < PHYSICAL_MEMORY_SIZE ||
-        physical_address >= PHYSICAL_MEMORY_SIZE ||
         (flags & ~PAGE_ALLOWED_FLAGS) != 0)
     {
         return 0;

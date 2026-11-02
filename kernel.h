@@ -39,6 +39,7 @@ enum ProcessStartResult
 
 void terminal_write_character(char character);
 void terminal_write(const char *text);
+void terminal_write_prompt(const char *text);
 void terminal_write_unsigned(unsigned int value);
 void terminal_clear(void);
 void video_initialize(void);

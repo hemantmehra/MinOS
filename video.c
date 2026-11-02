@@ -1,11 +1,27 @@
 #include <intrin.h>
 #include "kernel.h"
 
-#define VGA_WIDTH 80
-#define VGA_HEIGHT 30
-#define VGA_GRAPHICS_WIDTH 640
-#define VGA_GRAPHICS_HEIGHT 480
-#define VGA_GRAPHICS_BYTES_PER_ROW (VGA_GRAPHICS_WIDTH / 8)
+#define VGA_WIDTH 160
+#define VGA_HEIGHT 45
+#define VGA_GRAPHICS_WIDTH 1280
+#define VGA_GRAPHICS_HEIGHT 720
+#define VGA_FRAMEBUFFER_SIZE \
+    (VGA_GRAPHICS_WIDTH * VGA_GRAPHICS_HEIGHT)
+#define VGA_FRAMEBUFFER_VIRTUAL 0xD0000000
+#define VGA_FRAMEBUFFER_PAGES \
+    (VGA_FRAMEBUFFER_SIZE / 4096)
+#define VGA_VBE_INDEX_PORT 0x1CE
+#define VGA_VBE_DATA_PORT 0x1CF
+#define VGA_VBE_INDEX_ID 0
+#define VGA_VBE_INDEX_XRES 1
+#define VGA_VBE_INDEX_YRES 2
+#define VGA_VBE_INDEX_BPP 3
+#define VGA_VBE_INDEX_ENABLE 4
+#define VGA_VBE_INDEX_VIRTUAL_WIDTH 6
+#define VGA_VBE_INDEX_X_OFFSET 8
+#define VGA_VBE_INDEX_Y_OFFSET 9
+#define VGA_VBE_ENABLE 0x01
+#define VGA_VBE_LINEAR_FRAMEBUFFER 0x40
 #define VGA_TEXT_FONT_CHARACTERS 128
 #define VGA_TEXT_FONT_HEIGHT 16
 
@@ -13,6 +29,8 @@ static unsigned char vga_text_font[
     VGA_TEXT_FONT_CHARACTERS * VGA_TEXT_FONT_HEIGHT];
 static unsigned short terminal_position;
 static unsigned short terminal_cells[VGA_WIDTH * VGA_HEIGHT];
+static unsigned char terminal_attribute = 0x0F;
+static volatile unsigned char *vga_framebuffer;
 
 static void vga_render_character(
     unsigned short position,
@@ -82,9 +100,11 @@ void terminal_write_character(char character)
     }
     else
     {
-        terminal_cells[position] =
-            (unsigned short)(0x0F00 | (unsigned char)character);
-        vga_render_character(position, (unsigned char)character, 0x0F);
+        terminal_cells[position] = (unsigned short)(
+            ((unsigned short)terminal_attribute << 8) |
+            (unsigned char)character);
+        vga_render_character(
+            position, (unsigned char)character, terminal_attribute);
         ++position;
         __outbyte(0xE9, (unsigned char)character);
     }
@@ -122,6 +142,29 @@ void terminal_write(const char *text)
     }
 }
 
+void terminal_write_prompt(const char *text)
+{
+    unsigned int flags;
+
+    __asm
+    {
+        pushfd
+        pop eax
+        mov flags, eax
+        cli
+    }
+
+    terminal_attribute = 0x09;
+    terminal_write(text);
+    terminal_attribute = 0x0F;
+
+    __asm
+    {
+        push flags
+        popfd
+    }
+}
+
 void terminal_clear(void)
 {
     unsigned int flags;
@@ -150,65 +193,113 @@ void terminal_clear(void)
     }
 }
 
-static void vga_write_indexed_registers(
-    unsigned short index_port,
-    unsigned short data_port,
-    const unsigned char *registers,
-    unsigned int count)
+static unsigned int pci_read_config(
+    unsigned int bus,
+    unsigned int device,
+    unsigned int function,
+    unsigned int offset)
 {
-    unsigned int index;
+    unsigned int address =
+        0x80000000 |
+        (bus << 16) |
+        (device << 11) |
+        (function << 8) |
+        (offset & 0xFC);
 
-    for (index = 0; index < count; ++index)
-    {
-        __outbyte(index_port, (unsigned char)index);
-        __outbyte(data_port, registers[index]);
-    }
+    __outdword(0xCF8, address);
+    return __indword(0xCFC);
 }
 
-static void vga_write_attribute_registers(const unsigned char *registers)
+static unsigned int vga_find_framebuffer(void)
 {
-    unsigned int index;
+    unsigned int device;
 
-    for (index = 0; index < 21; ++index)
+    for (device = 0; device < 32; ++device)
     {
-        __inbyte(0x3DA);
-        __outbyte(0x3C0, (unsigned char)index);
-        __outbyte(0x3C0, registers[index]);
+        unsigned int vendor_and_device =
+            pci_read_config(0, device, 0, 0);
+        unsigned int class_and_subclass =
+            pci_read_config(0, device, 0, 8);
+
+        if ((vendor_and_device & 0xFFFF) == 0xFFFF ||
+            (class_and_subclass >> 24) != 0x03)
+        {
+            continue;
+        }
+
+        {
+            unsigned int bar = pci_read_config(0, device, 0, 0x10);
+            unsigned int framebuffer = bar & 0xFFFFFFF0;
+
+            if ((bar & 1) == 0 && framebuffer != 0)
+            {
+                return framebuffer;
+            }
+        }
     }
 
-    __inbyte(0x3DA);
-    __outbyte(0x3C0, 0x20);
+    return 0;
 }
 
-static void vga_set_graphics_mode(void)
+static void vbe_write_register(
+    unsigned short index,
+    unsigned short value)
 {
-    static const unsigned char graphics_sequencer[] =
-        { 0x03, 0x01, 0x0F, 0x00, 0x06 };
-    static const unsigned char graphics_crtc[] =
-        {
-            0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0x0B, 0x3E,
-            0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0xEA, 0x8C, 0xDF, 0x28, 0x00, 0xE7, 0x04, 0xE3,
-            0xFF
-        };
-    static const unsigned char graphics_controller[] =
-        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x0F, 0xFF };
-    static const unsigned char graphics_attributes[] =
-        {
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-            0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-            0x01, 0x00, 0x0F, 0x00, 0x00
-        };
+    __outword(VGA_VBE_INDEX_PORT, index);
+    __outword(VGA_VBE_DATA_PORT, value);
+}
 
-    __outbyte(0x3C2, 0xE3);
-    vga_write_indexed_registers(
-        0x3C4, 0x3C5, graphics_sequencer, 5);
-    __outbyte(0x3D4, 0x11);
-    __outbyte(0x3D5, (unsigned char)(__inbyte(0x3D5) & 0x7F));
-    vga_write_indexed_registers(0x3D4, 0x3D5, graphics_crtc, 25);
-    vga_write_indexed_registers(
-        0x3CE, 0x3CF, graphics_controller, 9);
-    vga_write_attribute_registers(graphics_attributes);
+static unsigned short vbe_read_register(unsigned short index)
+{
+    __outword(VGA_VBE_INDEX_PORT, index);
+    return __inword(VGA_VBE_DATA_PORT);
+}
+
+static int vga_set_graphics_mode(void)
+{
+    unsigned int framebuffer = vga_find_framebuffer();
+    unsigned int page;
+
+    if (framebuffer == 0 || vbe_read_register(VGA_VBE_INDEX_ID) < 0xB0C0)
+    {
+        return 0;
+    }
+
+    vbe_write_register(VGA_VBE_INDEX_ENABLE, 0);
+    vbe_write_register(VGA_VBE_INDEX_XRES, VGA_GRAPHICS_WIDTH);
+    vbe_write_register(VGA_VBE_INDEX_YRES, VGA_GRAPHICS_HEIGHT);
+    vbe_write_register(VGA_VBE_INDEX_BPP, 8);
+    vbe_write_register(VGA_VBE_INDEX_VIRTUAL_WIDTH, VGA_GRAPHICS_WIDTH);
+    vbe_write_register(VGA_VBE_INDEX_X_OFFSET, 0);
+    vbe_write_register(VGA_VBE_INDEX_Y_OFFSET, 0);
+    vbe_write_register(
+        VGA_VBE_INDEX_ENABLE,
+        VGA_VBE_ENABLE | VGA_VBE_LINEAR_FRAMEBUFFER);
+
+    for (page = 0; page < VGA_FRAMEBUFFER_PAGES; ++page)
+    {
+        unsigned int physical_address = framebuffer + page * 4096;
+
+        if (!memory_map_page(
+            VGA_FRAMEBUFFER_VIRTUAL + page * 4096,
+            physical_address,
+            0x02))
+        {
+            while (page != 0)
+            {
+                unsigned int unmapped_address;
+                --page;
+                memory_unmap_page(
+                    VGA_FRAMEBUFFER_VIRTUAL + page * 4096,
+                    &unmapped_address);
+            }
+            return 0;
+        }
+    }
+
+    vga_framebuffer =
+        (volatile unsigned char *)VGA_FRAMEBUFFER_VIRTUAL;
+    return 1;
 }
 
 static void vga_save_text_font(void)
@@ -258,69 +349,13 @@ static void vga_initialize_palette(void)
     }
 }
 
-static void vga_set_write_color(unsigned char color)
-{
-    __outbyte(0x3C4, 2);
-    __outbyte(0x3C5, 0x0F);
-    __outbyte(0x3CE, 1);
-    __outbyte(0x3CF, 0x0F);
-    __outbyte(0x3CE, 3);
-    __outbyte(0x3CF, 0x00);
-    __outbyte(0x3CE, 5);
-    __outbyte(0x3CF, 0x00);
-    __outbyte(0x3CE, 0);
-    __outbyte(0x3CF, color);
-}
-
 static void vga_fill_screen(unsigned char color)
 {
-    volatile unsigned char *video_memory =
-        (volatile unsigned char *)0xA0000;
     unsigned int index;
 
-    vga_set_write_color(color);
-    __outbyte(0x3CE, 8);
-    __outbyte(0x3CF, 0xFF);
-    for (index = 0;
-        index < VGA_GRAPHICS_BYTES_PER_ROW * VGA_GRAPHICS_HEIGHT;
-        ++index)
+    for (index = 0; index < VGA_FRAMEBUFFER_SIZE; ++index)
     {
-        video_memory[index] = 0xFF;
-    }
-}
-
-static void vga_write_masked_byte(
-    volatile unsigned char *video_memory,
-    unsigned int offset)
-{
-    unsigned char latches = video_memory[offset];
-
-    (void)latches;
-    video_memory[offset] = 0xFF;
-}
-
-static void vga_draw_glyph_pixels(
-    volatile unsigned char *video_memory,
-    unsigned int x,
-    unsigned int y,
-    unsigned char glyph,
-    unsigned char draw_set_pixels)
-{
-    unsigned int column;
-
-    __outbyte(0x3CE, 8);
-    for (column = 0; column < 8; ++column)
-    {
-        unsigned char set_pixel =
-            (glyph & (0x80 >> column)) != 0;
-        if (set_pixel == draw_set_pixels)
-        {
-            unsigned int pixel_x = x + column;
-            __outbyte(0x3CF, (unsigned char)(0x80 >> (pixel_x & 7)));
-            vga_write_masked_byte(
-                video_memory,
-                y * VGA_GRAPHICS_BYTES_PER_ROW + pixel_x / 8);
-        }
+        vga_framebuffer[index] = color;
     }
 }
 
@@ -329,14 +364,12 @@ static void vga_render_character(
     unsigned char character,
     unsigned char attribute)
 {
-    volatile unsigned char *video_memory =
-        (volatile unsigned char *)0xA0000;
     unsigned int row;
     unsigned char foreground = attribute & 0x0F;
     unsigned char background = attribute >> 4;
     unsigned int x = (position % VGA_WIDTH) * 8;
     unsigned int y = (position / VGA_WIDTH) * VGA_TEXT_FONT_HEIGHT;
-    unsigned char glyphs[VGA_TEXT_FONT_HEIGHT];
+    unsigned int column;
 
     if (character >= VGA_TEXT_FONT_CHARACTERS)
     {
@@ -345,20 +378,18 @@ static void vga_render_character(
 
     for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
     {
-        glyphs[row] = vga_text_font[
+        unsigned char glyph = vga_text_font[
             character * VGA_TEXT_FONT_HEIGHT + row];
-    }
 
-    vga_set_write_color(background);
-    for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
-    {
-        vga_draw_glyph_pixels(video_memory, x, y + row, glyphs[row], 0);
-    }
-
-    vga_set_write_color(foreground);
-    for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
-    {
-        vga_draw_glyph_pixels(video_memory, x, y + row, glyphs[row], 1);
+        for (column = 0; column < 8; ++column)
+        {
+            unsigned char color =
+                (glyph & (0x80 >> column)) != 0
+                ? foreground
+                : background;
+            vga_framebuffer[
+                (y + row) * VGA_GRAPHICS_WIDTH + x + column] = color;
+        }
     }
 }
 
@@ -388,8 +419,6 @@ static void graphics_plot_circle_point(
     int x,
     int y)
 {
-    volatile unsigned char *video_memory =
-        (volatile unsigned char *)0xA0000;
     int points[8][2] =
         {
             { center_x + x, center_y + y },
@@ -403,18 +432,13 @@ static void graphics_plot_circle_point(
         };
     unsigned int index;
 
-    __outbyte(0x3CE, 0);
-    __outbyte(0x3CF, 4);
-    __outbyte(0x3CE, 8);
     for (index = 0; index < 8; ++index)
     {
         int point_x = points[index][0];
         int point_y = points[index][1];
 
-        __outbyte(0x3CF, (unsigned char)(0x80 >> (point_x & 7)));
-        vga_write_masked_byte(
-            video_memory,
-            point_y * VGA_GRAPHICS_BYTES_PER_ROW + point_x / 8);
+        vga_framebuffer[
+            point_y * VGA_GRAPHICS_WIDTH + point_x] = 12;
     }
 }
 
@@ -424,12 +448,11 @@ void video_draw_circle(void)
     int y = 0;
     int error = 1 - x;
 
-    vga_set_graphics_mode();
     vga_fill_screen(15);
 
     while (x >= y)
     {
-        graphics_plot_circle_point(320, 240, x, y);
+        graphics_plot_circle_point(640, 360, x, y);
         ++y;
         if (error < 0)
         {
@@ -463,7 +486,21 @@ void terminal_write_unsigned(unsigned int value)
 void video_initialize(void)
 {
     vga_save_text_font();
-    vga_set_graphics_mode();
+    if (!vga_set_graphics_mode())
+    {
+        const char *error =
+            "video: VBE 1280x720 framebuffer setup failed.\n";
+
+        while (*error != '\0')
+        {
+            __outbyte(0xE9, (unsigned char)*error);
+            ++error;
+        }
+        for (;;)
+        {
+            __asm hlt
+        }
+    }
     vga_initialize_palette();
     terminal_clear();
 }

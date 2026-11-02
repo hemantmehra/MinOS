@@ -262,7 +262,7 @@ void __cdecl kernel_main(void)
         unsigned int length = 0;
         char character;
 
-        terminal_write("minios> ");
+        terminal_write_prompt("minios> ");
 
         for (;;)
         {
