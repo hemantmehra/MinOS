@@ -2,6 +2,7 @@
 
 #define IDT_ENTRY_COUNT 256
 #define KERNEL_CODE_SELECTOR 0x08
+#define KERNEL_DATA_SELECTOR 0x10
 #define PIC_MASTER_COMMAND 0x20
 #define PIC_MASTER_DATA 0x21
 #define PIC_SLAVE_COMMAND 0xA0
@@ -44,7 +45,7 @@ static void __declspec(naked) keyboard_irq_stub(void)
     {
         pushad
         push ds
-        mov ax, KERNEL_CODE_SELECTOR
+        mov ax, KERNEL_DATA_SELECTOR
         mov ds, ax
         call keyboard_handle_irq
         pop ds

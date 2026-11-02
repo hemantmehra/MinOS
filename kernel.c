@@ -38,10 +38,57 @@ static void run_command(
     {
         clock_write_time();
     }
+    else if (command_equals(command, "mem"))
+    {
+        const unsigned int test_virtual_address = 0x40000000;
+        const unsigned int test_value = 0x4D454D31;
+        unsigned int physical_address = memory_allocate_page();
+        unsigned int translated_address;
+        unsigned int unmapped_address;
+        volatile unsigned int *test_mapping;
+
+        terminal_write("Free 4 KiB pages: ");
+        terminal_write_unsigned(memory_available_pages());
+        terminal_write("\n");
+
+        if (physical_address == 0)
+        {
+            terminal_write("mem: physical page allocation failed.\n");
+            return;
+        }
+        if (!memory_map_page(
+            test_virtual_address, physical_address, 0x02))
+        {
+            memory_free_page(physical_address);
+            terminal_write("mem: virtual page mapping failed.\n");
+            return;
+        }
+
+        test_mapping = (volatile unsigned int *)test_virtual_address;
+        *test_mapping = test_value;
+        if (*test_mapping != test_value ||
+            !memory_translate(test_virtual_address, &translated_address) ||
+            translated_address != physical_address)
+        {
+            memory_unmap_page(test_virtual_address, &unmapped_address);
+            memory_free_page(physical_address);
+            terminal_write("mem: virtual memory test failed.\n");
+            return;
+        }
+
+        if (!memory_unmap_page(test_virtual_address, &unmapped_address) ||
+            unmapped_address != physical_address ||
+            !memory_free_page(physical_address))
+        {
+            terminal_write("mem: page cleanup failed.\n");
+            return;
+        }
+        terminal_write("Virtual memory test passed.\n");
+    }
     else if (command_equals(command, "help"))
     {
         terminal_write(
-            "Commands: echo <text>, hostname, time, ls, mkdir, clear, draw, basic, help\n");
+            "Commands: echo <text>, hostname, time, mem, ls, mkdir, clear, draw, basic, help\n");
     }
     else if (command_equals(command, "clear"))
     {
@@ -149,6 +196,7 @@ void __cdecl kernel_main(void)
     unsigned char caps_lock = 0;
     unsigned char extended = 0;
 
+    memory_initialize();
     video_initialize();
     interrupts_initialize();
     terminal_write("Hello, world!\n");

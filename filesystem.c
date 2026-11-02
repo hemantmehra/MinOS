@@ -1,7 +1,7 @@
 #include <intrin.h>
 #include "kernel.h"
 
-#define FILESYSTEM_START_SECTOR 65
+#define FILESYSTEM_START_SECTOR 129
 #define DISK_SECTOR_COUNT 32768
 #define SECTOR_SIZE 512
 #define ATA_DATA_PORT 0x1F0

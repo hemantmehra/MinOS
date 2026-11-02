@@ -36,15 +36,19 @@ Kernel code is organized by subsystem: `kernel.c` handles shell dispatch,
 `video.c` renders the VGA terminal, `keyboard.c` reads keyboard input,
 `filesystem.c` implements FAT16 access, `basic.c` contains the BASIC
 interpreter, `interrupts.c` sets up the IDT and keyboard IRQ, `time.c` reads
-the CMOS real-time clock, and `shell_utils.c` provides shared shell helpers.
-CPU exceptions halt safely, keyboard input is delivered through IRQ1, and
-shared interfaces are declared in `kernel.h`.
+the CMOS real-time clock, `memory.c` initializes x86 paging and manages 4 KiB
+physical pages, and `shell_utils.c` provides shared shell helpers. Paging
+identity-maps the first 16 MiB and provides APIs to allocate/free physical
+pages and map, unmap, and translate virtual addresses. CPU exceptions halt
+safely, keyboard input is delivered through IRQ1, and shared interfaces are
+declared in `kernel.h`.
 
 Supported shell commands:
 
 - `echo <text>` prints its arguments.
 - `hostname` prints `minios`.
 - `time` displays the current UTC date and time from the real-time clock.
+- `mem` reports free 4 KiB pages and tests virtual page mapping.
 - `ls` lists files in the current root directory.
 - `mkdir <name>` creates a directory in the current root directory. Names may
   contain 1-8 letters, digits, underscores, or hyphens.

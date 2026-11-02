@@ -23,6 +23,20 @@ void video_draw_circle(void);
 void interrupts_initialize(void);
 void clock_write_time(void);
 void keyboard_handle_irq(void);
+void memory_initialize(void);
+unsigned int memory_allocate_page(void);
+int memory_free_page(unsigned int physical_address);
+int memory_map_page(
+    unsigned int virtual_address,
+    unsigned int physical_address,
+    unsigned int flags);
+int memory_unmap_page(
+    unsigned int virtual_address,
+    unsigned int *physical_address);
+int memory_translate(
+    unsigned int virtual_address,
+    unsigned int *physical_address);
+unsigned int memory_available_pages(void);
 
 int is_space(char character);
 int command_equals(const char *command, const char *expected);

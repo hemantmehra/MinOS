@@ -74,6 +74,7 @@ def run_msvc(developer_command):
         "filesystem.c",
         "keyboard.c",
         "interrupts.c",
+        "memory.c",
         "time.c",
         "shell_utils.c",
         "basic.c",
