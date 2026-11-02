@@ -21,6 +21,23 @@ start:
     int 0x13
     jc disk_read_error
 
+    mov ax, 0x1130
+    mov bh, 0x06
+    int 0x10
+    push ds
+    push es
+    pop ds
+    mov si, bp
+    mov ax, 0x0500
+    mov es, ax
+    xor di, di
+    mov cx, 128 * 16
+    cld
+    rep movsb
+    pop ds
+    xor ax, ax
+    mov es, ax
+
     cli
     in al, 0x92
     or al, 0x02

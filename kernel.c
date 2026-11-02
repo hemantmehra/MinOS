@@ -1,12 +1,12 @@
 #include <intrin.h>
 
 #define VGA_WIDTH 80
-#define VGA_HEIGHT 25
-#define VGA_GRAPHICS_WIDTH 320
-#define VGA_GRAPHICS_HEIGHT 200
+#define VGA_HEIGHT 30
+#define VGA_GRAPHICS_WIDTH 640
+#define VGA_GRAPHICS_HEIGHT 480
+#define VGA_GRAPHICS_BYTES_PER_ROW (VGA_GRAPHICS_WIDTH / 8)
 #define VGA_TEXT_FONT_CHARACTERS 128
 #define VGA_TEXT_FONT_HEIGHT 16
-#define VGA_TEXT_FONT_SLOT_SIZE 32
 #define COMMAND_BUFFER_SIZE 128
 #define BASIC_PROGRAM_LINE_COUNT 16
 #define BASIC_VALUE_LIMIT 32767
@@ -29,6 +29,15 @@
 
 static unsigned char vga_text_font[
     VGA_TEXT_FONT_CHARACTERS * VGA_TEXT_FONT_HEIGHT];
+static unsigned short terminal_position;
+static unsigned short terminal_cells[VGA_WIDTH * VGA_HEIGHT];
+
+static void vga_render_character(
+    unsigned short position,
+    unsigned char character,
+    unsigned char attribute);
+static void vga_fill_screen(unsigned char color);
+static void vga_render_terminal(void);
 
 typedef struct
 {
@@ -48,44 +57,33 @@ static int basic_variables[26];
 
 static unsigned short vga_cursor_position(void)
 {
-    unsigned short position;
-
-    __outbyte(0x3D4, 14);
-    position = (unsigned short)__inbyte(0x3D5) << 8;
-    __outbyte(0x3D4, 15);
-    position |= __inbyte(0x3D5);
-    return position;
+    return terminal_position;
 }
 
 static void vga_set_cursor_position(unsigned short position)
 {
-    __outbyte(0x3D4, 14);
-    __outbyte(0x3D5, (unsigned char)(position >> 8));
-    __outbyte(0x3D4, 15);
-    __outbyte(0x3D5, (unsigned char)position);
+    terminal_position = position;
 }
 
 static void vga_scroll(void)
 {
-    volatile unsigned short *video_memory =
-        (volatile unsigned short *)0xB8000;
     unsigned int index;
 
     for (index = 0; index < VGA_WIDTH * (VGA_HEIGHT - 1); ++index)
     {
-        video_memory[index] = video_memory[index + VGA_WIDTH];
+        terminal_cells[index] = terminal_cells[index + VGA_WIDTH];
     }
 
     for (; index < VGA_WIDTH * VGA_HEIGHT; ++index)
     {
-        video_memory[index] = 0x0F20;
+        terminal_cells[index] = 0x0F20;
     }
+
+    vga_render_terminal();
 }
 
 static void terminal_write_character(char character)
 {
-    volatile unsigned short *video_memory =
-        (volatile unsigned short *)0xB8000;
     unsigned short position = vga_cursor_position();
 
     if (character == '\r')
@@ -101,12 +99,15 @@ static void terminal_write_character(char character)
         if (position != 0)
         {
             --position;
-            video_memory[position] = 0x0F20;
+            terminal_cells[position] = 0x0F20;
+            vga_render_character(position, ' ', 0x0F);
         }
     }
     else
     {
-        video_memory[position] = (unsigned short)(0x0F00 | (unsigned char)character);
+        terminal_cells[position] =
+            (unsigned short)(0x0F00 | (unsigned char)character);
+        vga_render_character(position, (unsigned char)character, 0x0F);
         ++position;
         __outbyte(0xE9, (unsigned char)character);
     }
@@ -140,15 +141,14 @@ static void terminal_write(const char *text)
 
 static void terminal_clear(void)
 {
-    volatile unsigned short *video_memory =
-        (volatile unsigned short *)0xB8000;
     unsigned int index;
 
     for (index = 0; index < VGA_WIDTH * VGA_HEIGHT; ++index)
     {
-        video_memory[index] = 0x0F20;
+        terminal_cells[index] = 0x0F20;
     }
 
+    vga_fill_screen(0);
     vga_set_cursor_position(0);
 }
 
@@ -182,123 +182,49 @@ static void vga_write_attribute_registers(const unsigned char *registers)
     __outbyte(0x3C0, 0x20);
 }
 
-static void vga_set_mode(unsigned char graphics)
+static void vga_set_graphics_mode(void)
 {
     static const unsigned char graphics_sequencer[] =
-        { 0x03, 0x01, 0x0F, 0x00, 0x0E };
-    static const unsigned char text_sequencer[] =
-        { 0x03, 0x00, 0x03, 0x00, 0x02 };
+        { 0x03, 0x01, 0x0F, 0x00, 0x06 };
     static const unsigned char graphics_crtc[] =
         {
-            0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F,
-            0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x9C, 0x0E, 0x8F, 0x28, 0x40, 0x96, 0xB9, 0xA3,
-            0xFF
-        };
-    static const unsigned char text_crtc[] =
-        {
-            0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F,
-            0x00, 0x4F, 0x0D, 0x0E, 0x00, 0x00, 0x00, 0x00,
-            0x9C, 0x0E, 0x8F, 0x28, 0x1F, 0x96, 0xB9, 0xA3,
+            0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0x0B, 0x3E,
+            0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xEA, 0x8C, 0xDF, 0x28, 0x00, 0xE7, 0x04, 0xE3,
             0xFF
         };
     static const unsigned char graphics_controller[] =
-        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF };
-    static const unsigned char text_controller[] =
-        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x0E, 0x00, 0xFF };
+        { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x0F, 0xFF };
     static const unsigned char graphics_attributes[] =
         {
             0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
             0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-            0x41, 0x00, 0x0F, 0x00, 0x00
+            0x01, 0x00, 0x0F, 0x00, 0x00
         };
-    static const unsigned char text_attributes[] =
-        {
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-            0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-            0x0C, 0x00, 0x0F, 0x08, 0x00
-        };
-    const unsigned char *sequencer =
-        graphics ? graphics_sequencer : text_sequencer;
-    const unsigned char *crtc = graphics ? graphics_crtc : text_crtc;
-    const unsigned char *controller =
-        graphics ? graphics_controller : text_controller;
-    const unsigned char *attributes =
-        graphics ? graphics_attributes : text_attributes;
 
-    __outbyte(0x3C2, graphics ? 0x63 : 0x67);
-    vga_write_indexed_registers(0x3C4, 0x3C5, sequencer, 5);
+    __outbyte(0x3C2, 0xE3);
+    vga_write_indexed_registers(
+        0x3C4, 0x3C5, graphics_sequencer, 5);
     __outbyte(0x3D4, 0x11);
     __outbyte(0x3D5, (unsigned char)(__inbyte(0x3D5) & 0x7F));
-    vga_write_indexed_registers(0x3D4, 0x3D5, crtc, 25);
-    vga_write_indexed_registers(0x3CE, 0x3CF, controller, 9);
-    vga_write_attribute_registers(attributes);
-}
-
-static void vga_select_font_plane(void)
-{
-    __outbyte(0x3C4, 0);
-    __outbyte(0x3C5, 0x01);
-    __outbyte(0x3C4, 2);
-    __outbyte(0x3C5, 0x04);
-    __outbyte(0x3C4, 4);
-    __outbyte(0x3C5, 0x06);
-    __outbyte(0x3CE, 1);
-    __outbyte(0x3CF, 0x00);
-    __outbyte(0x3CE, 3);
-    __outbyte(0x3CF, 0x00);
-    __outbyte(0x3CE, 4);
-    __outbyte(0x3CF, 0x02);
-    __outbyte(0x3CE, 5);
-    __outbyte(0x3CF, 0x00);
-    __outbyte(0x3CE, 6);
-    __outbyte(0x3CF, 0x04);
-    __outbyte(0x3CE, 8);
-    __outbyte(0x3CF, 0xFF);
-    __outbyte(0x3C4, 0);
-    __outbyte(0x3C5, 0x03);
+    vga_write_indexed_registers(0x3D4, 0x3D5, graphics_crtc, 25);
+    vga_write_indexed_registers(
+        0x3CE, 0x3CF, graphics_controller, 9);
+    vga_write_attribute_registers(graphics_attributes);
 }
 
 static void vga_save_text_font(void)
 {
-    volatile unsigned char *font_memory =
-        (volatile unsigned char *)0xA0000;
-    unsigned int character;
-    unsigned int row;
+    volatile const unsigned char *font_memory =
+        (volatile const unsigned char *)0x5000;
+    unsigned int index;
 
-    vga_select_font_plane();
-    for (character = 0; character < VGA_TEXT_FONT_CHARACTERS; ++character)
+    for (index = 0;
+        index < VGA_TEXT_FONT_CHARACTERS * VGA_TEXT_FONT_HEIGHT;
+        ++index)
     {
-        for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
-        {
-            vga_text_font[
-                character * VGA_TEXT_FONT_HEIGHT + row] =
-                font_memory[character * VGA_TEXT_FONT_SLOT_SIZE + row];
-        }
+        vga_text_font[index] = font_memory[index];
     }
-
-    vga_set_mode(0);
-}
-
-static void vga_restore_text_font(void)
-{
-    volatile unsigned char *font_memory =
-        (volatile unsigned char *)0xA0000;
-    unsigned int character;
-    unsigned int row;
-
-    vga_select_font_plane();
-    for (character = 0; character < VGA_TEXT_FONT_CHARACTERS; ++character)
-    {
-        for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
-        {
-            font_memory[character * VGA_TEXT_FONT_SLOT_SIZE + row] =
-                vga_text_font[
-                    character * VGA_TEXT_FONT_HEIGHT + row];
-        }
-    }
-
-    vga_set_mode(0);
 }
 
 static void vga_set_palette_color(
@@ -313,45 +239,200 @@ static void vga_set_palette_color(
     __outbyte(0x3C9, blue);
 }
 
-static void graphics_plot_circle_point(
+static void vga_initialize_palette(void)
+{
+    static const unsigned char colors[16][3] =
+        {
+            { 0, 0, 0 }, { 0, 0, 42 }, { 0, 42, 0 }, { 0, 42, 42 },
+            { 42, 0, 0 }, { 42, 0, 42 }, { 42, 21, 0 }, { 42, 42, 42 },
+            { 21, 21, 21 }, { 21, 21, 63 }, { 21, 63, 21 }, { 21, 63, 63 },
+            { 63, 21, 21 }, { 63, 21, 63 }, { 63, 63, 21 }, { 63, 63, 63 }
+        };
+    unsigned int index;
+
+    for (index = 0; index < 16; ++index)
+    {
+        vga_set_palette_color(
+            (unsigned char)index,
+            colors[index][0],
+            colors[index][1],
+            colors[index][2]);
+    }
+}
+
+static void vga_set_write_color(unsigned char color)
+{
+    __outbyte(0x3C4, 2);
+    __outbyte(0x3C5, 0x0F);
+    __outbyte(0x3CE, 1);
+    __outbyte(0x3CF, 0x0F);
+    __outbyte(0x3CE, 3);
+    __outbyte(0x3CF, 0x00);
+    __outbyte(0x3CE, 5);
+    __outbyte(0x3CF, 0x00);
+    __outbyte(0x3CE, 0);
+    __outbyte(0x3CF, color);
+}
+
+static void vga_fill_screen(unsigned char color)
+{
+    volatile unsigned char *video_memory =
+        (volatile unsigned char *)0xA0000;
+    unsigned int index;
+
+    vga_set_write_color(color);
+    __outbyte(0x3CE, 8);
+    __outbyte(0x3CF, 0xFF);
+    for (index = 0;
+        index < VGA_GRAPHICS_BYTES_PER_ROW * VGA_GRAPHICS_HEIGHT;
+        ++index)
+    {
+        video_memory[index] = 0xFF;
+    }
+}
+
+static void vga_write_masked_byte(
     volatile unsigned char *video_memory,
+    unsigned int offset)
+{
+    unsigned char latches = video_memory[offset];
+
+    (void)latches;
+    video_memory[offset] = 0xFF;
+}
+
+static void vga_draw_glyph_pixels(
+    volatile unsigned char *video_memory,
+    unsigned int x,
+    unsigned int y,
+    unsigned char glyph,
+    unsigned char draw_set_pixels)
+{
+    unsigned int column;
+
+    __outbyte(0x3CE, 8);
+    for (column = 0; column < 8; ++column)
+    {
+        unsigned char set_pixel =
+            (glyph & (0x80 >> column)) != 0;
+        if (set_pixel == draw_set_pixels)
+        {
+            unsigned int pixel_x = x + column;
+            __outbyte(0x3CF, (unsigned char)(0x80 >> (pixel_x & 7)));
+            vga_write_masked_byte(
+                video_memory,
+                y * VGA_GRAPHICS_BYTES_PER_ROW + pixel_x / 8);
+        }
+    }
+}
+
+static void vga_render_character(
+    unsigned short position,
+    unsigned char character,
+    unsigned char attribute)
+{
+    volatile unsigned char *video_memory =
+        (volatile unsigned char *)0xA0000;
+    unsigned int row;
+    unsigned char foreground = attribute & 0x0F;
+    unsigned char background = attribute >> 4;
+    unsigned int x = (position % VGA_WIDTH) * 8;
+    unsigned int y = (position / VGA_WIDTH) * VGA_TEXT_FONT_HEIGHT;
+    unsigned char glyphs[VGA_TEXT_FONT_HEIGHT];
+
+    if (character >= VGA_TEXT_FONT_CHARACTERS ||
+        (character == ' ' && background == 0))
+    {
+        return;
+    }
+
+    for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
+    {
+        glyphs[row] = vga_text_font[
+            character * VGA_TEXT_FONT_HEIGHT + row];
+    }
+
+    vga_set_write_color(background);
+    for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
+    {
+        vga_draw_glyph_pixels(video_memory, x, y + row, glyphs[row], 0);
+    }
+
+    vga_set_write_color(foreground);
+    for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)
+    {
+        vga_draw_glyph_pixels(video_memory, x, y + row, glyphs[row], 1);
+    }
+}
+
+static void vga_render_terminal(void)
+{
+    unsigned int position;
+
+    vga_fill_screen(0);
+    for (position = 0; position < VGA_WIDTH * VGA_HEIGHT; ++position)
+    {
+        unsigned short cell = terminal_cells[position];
+        unsigned char character = (unsigned char)cell;
+
+        if (character != ' ')
+        {
+            vga_render_character(
+                (unsigned short)position,
+                character,
+                (unsigned char)(cell >> 8));
+        }
+    }
+}
+
+static void graphics_plot_circle_point(
     int center_x,
     int center_y,
     int x,
     int y)
 {
-    video_memory[(center_y + y) * VGA_GRAPHICS_WIDTH + center_x + x] = 1;
-    video_memory[(center_y + y) * VGA_GRAPHICS_WIDTH + center_x - x] = 1;
-    video_memory[(center_y - y) * VGA_GRAPHICS_WIDTH + center_x + x] = 1;
-    video_memory[(center_y - y) * VGA_GRAPHICS_WIDTH + center_x - x] = 1;
-    video_memory[(center_y + x) * VGA_GRAPHICS_WIDTH + center_x + y] = 1;
-    video_memory[(center_y + x) * VGA_GRAPHICS_WIDTH + center_x - y] = 1;
-    video_memory[(center_y - x) * VGA_GRAPHICS_WIDTH + center_x + y] = 1;
-    video_memory[(center_y - x) * VGA_GRAPHICS_WIDTH + center_x - y] = 1;
+    volatile unsigned char *video_memory =
+        (volatile unsigned char *)0xA0000;
+    int points[8][2] =
+        {
+            { center_x + x, center_y + y },
+            { center_x - x, center_y + y },
+            { center_x + x, center_y - y },
+            { center_x - x, center_y - y },
+            { center_x + y, center_y + x },
+            { center_x - y, center_y + x },
+            { center_x + y, center_y - x },
+            { center_x - y, center_y - x }
+        };
+    unsigned int index;
+
+    __outbyte(0x3CE, 0);
+    __outbyte(0x3CF, 4);
+    __outbyte(0x3CE, 8);
+    for (index = 0; index < 8; ++index)
+    {
+        int point_x = points[index][0];
+        int point_y = points[index][1];
+
+        __outbyte(0x3CF, (unsigned char)(0x80 >> (point_x & 7)));
+        vga_write_masked_byte(
+            video_memory,
+            point_y * VGA_GRAPHICS_BYTES_PER_ROW + point_x / 8);
+    }
 }
 
 static void graphics_draw_circle(void)
 {
-    volatile unsigned char *video_memory =
-        (volatile unsigned char *)0xA0000;
-    unsigned int index;
-    int x = 60;
+    int x = 140;
     int y = 0;
     int error = 1 - x;
 
-    vga_save_text_font();
-    vga_set_mode(1);
-    vga_set_palette_color(0, 63, 63, 63);
-    vga_set_palette_color(1, 63, 0, 0);
-
-    for (index = 0; index < VGA_GRAPHICS_WIDTH * VGA_GRAPHICS_HEIGHT; ++index)
-    {
-        video_memory[index] = 0;
-    }
+    vga_set_graphics_mode();
+    vga_fill_screen(15);
 
     while (x >= y)
     {
-        graphics_plot_circle_point(video_memory, 160, 100, x, y);
+        graphics_plot_circle_point(320, 240, x, y);
         ++y;
         if (error < 0)
         {
@@ -1997,10 +2078,7 @@ static void run_command(
                 shift_pressed, caps_lock, extended);
         } while (character != '\x1B');
 
-        vga_set_mode(0);
-        vga_restore_text_font();
-        vga_set_palette_color(0, 0, 0, 0);
-        vga_set_palette_color(1, 0, 0, 42);
+        vga_set_graphics_mode();
         terminal_clear();
     }
     else if (command_equals(command, "basic"))
@@ -2092,6 +2170,9 @@ void __cdecl kernel_main(void)
     unsigned char caps_lock = 0;
     unsigned char extended = 0;
 
+    vga_save_text_font();
+    vga_set_graphics_mode();
+    vga_initialize_palette();
     terminal_clear();
     terminal_write("Hello, world!\n");
     terminal_write("Type help for available commands.\n");

@@ -26,10 +26,11 @@ python build.py
 python run.py
 ```
 
-QEMU opens the kernel with a BIOS-backed PC. The kernel clears the VGA text
-screen, prints the greeting, and displays a keyboard-driven `minios>` prompt.
-The disk image contains a writable FAT16 filesystem populated with project
-files and directories.
+QEMU opens the kernel with a BIOS-backed PC. The kernel uses 640x480 VGA
+graphics with a 16-color palette, rendering the shell with bitmap characters.
+It prints the greeting and displays a keyboard-driven `minios>` prompt. The
+disk image contains a writable FAT16 filesystem populated with project files
+and directories.
 
 Supported shell commands:
 
@@ -39,8 +40,8 @@ Supported shell commands:
 - `mkdir <name>` creates a directory in the current root directory. Names may
   contain 1-8 letters, digits, underscores, or hyphens.
 - `clear` clears the screen.
-- `draw` switches to graphics mode and draws a red circle on a white
-  background. Press Escape to return to the text shell.
+- `draw` draws a red circle on a white background at 640x480 resolution.
+  Press Escape to return to the bitmap-character shell.
 - `basic` opens a line-numbered BASIC interpreter. Enter numbered lines to
   write a program, then use `RUN`, `LIST`, `NEW`, or `EXIT`. Programs support
   `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`, `END`, and integer expressions.
