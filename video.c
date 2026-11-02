@@ -306,8 +306,7 @@ static void vga_render_character(
     unsigned int y = (position / VGA_WIDTH) * VGA_TEXT_FONT_HEIGHT;
     unsigned char glyphs[VGA_TEXT_FONT_HEIGHT];
 
-    if (character >= VGA_TEXT_FONT_CHARACTERS ||
-        (character == ' ' && background == 0))
+    if (character >= VGA_TEXT_FONT_CHARACTERS)
     {
         return;
     }
