@@ -1,0 +1,46 @@
+fn main() {
+    array values[100];
+    let count = 0;
+    let command = read_line("> ", 31);
+
+    while (!equals(command, "exit")) {
+        if (starts_with(command, "push ")) {
+            let value = parse_int(command, 5);
+            if (value < 0) {
+                print("usage: push <number>\n");
+            } else {
+                if (count >= 100) {
+                    print("stack full\n");
+                } else {
+                    values[count] = value;
+                    count = count + 1;
+                    print_num(value);
+                    print("\n");
+                }
+            }
+        } else {
+            if (equals(command, "pop")) {
+                if (count == 0) {
+                    print("null\n");
+                } else {
+                    count = count - 1;
+                    print_num(values[count]);
+                    print("\n");
+                }
+            } else {
+                if (equals(command, "top")) {
+                    if (count == 0) {
+                        print("null\n");
+                    } else {
+                        print_num(values[count - 1]);
+                        print("\n");
+                    }
+                } else {
+                    print("unknown command\n");
+                }
+            }
+        }
+
+        command = read_line("> ", 31);
+    }
+}

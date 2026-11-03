@@ -73,6 +73,8 @@ restore the shell display. Applications can poll keyboard scancodes with
 `EAX=2` (returns a scancode in `EAX`, or zero when no key is available).
 `src\programs\factorial.high` is compiled as `FACTORIAL.EXE`; run it and enter
 a number from 0 to 12 to display its factorial.
+`src\programs\stack.high` is compiled as `STACK.EXE`; it provides `push <n>`,
+`pop`, `top`, and `exit` commands using a 100-element integer array.
 
 Supported shell commands:
 
@@ -86,6 +88,8 @@ Supported shell commands:
 - Enter `COUNTDOWN.EXE` to print 10 through 1.
 - Enter `FACTORIAL.EXE` and provide a number from 0 to 12 to calculate its
   factorial.
+- Enter `STACK.EXE` to use a 100-item stack with `push <n>`, `pop`, `top`,
+  and `exit` commands.
 - Enter `PAINT.EXE` to run the included drawing program. Press Escape to
   return to the shell.
 - `ls` lists files in the current root directory.

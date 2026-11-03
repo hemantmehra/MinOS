@@ -40,6 +40,8 @@ Statements include:
 
 - `let name = expression;` to declare a local integer.
 - `name = expression;` to update a local or parameter.
+- `array name[size];` to declare a fixed-size local integer array. Accesses are
+  bounds checked at runtime.
 - `if (condition) { ... } else { ... }` and `while (condition) { ... }`.
 - `return;` or `return expression;`.
 - Function calls terminated with `;`.
@@ -57,6 +59,13 @@ arithmetic. `//` and `#` start comments. Strings support `\n`, `\r`, `\t`,
 - `let value = read_number("prompt", max_digits);` reads and echoes digits,
   supports Backspace, and returns the entered number after Enter.
   `max_digits` must be a constant from 1 to 9.
+- `let line = read_line("prompt", max_chars);` reads a lowercase command line,
+  echoes text, supports Backspace, and returns a pointer to its reusable input
+  buffer. `max_chars` must be a constant from 1 to 127.
+- `starts_with(line, "prefix")` and `equals(line, "text")` compare a line with
+  a string literal.
+- `parse_int(line, offset)` parses the decimal digits at a constant offset,
+  returning `-1` if no valid integer begins there.
 - `key()` returns a queued keyboard make scancode; Escape is `1`.
 - `clear(color);` fills the 1280x720 framebuffer with an 8-bit palette color.
 - `pixel(x, y, color);` draws one pixel when the coordinates are on screen.

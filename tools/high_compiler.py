@@ -11,16 +11,20 @@ TOKEN_PATTERN = re.compile(
     r'|(?P<string>"(?:\\.|[^"\\])*")'
     r"|(?P<number>[0-9]+)"
     r"|(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)"
-    r"|(?P<operator>==|!=|<=|>=|[{}(),;=+\-*/%<>!])"
+    r"|(?P<operator>==|!=|<=|>=|[{}\[\](),;=+\-*/%<>!])"
 )
 
 BUILTINS = {
     "clear": (1, "statement"),
+    "equals": (2, "expression"),
     "key": (0, "expression"),
+    "parse_int": (2, "expression"),
     "pixel": (3, "statement"),
     "print": (1, "statement"),
     "print_num": (1, "statement"),
     "read_number": (2, "expression"),
+    "read_line": (2, "expression"),
+    "starts_with": (2, "expression"),
 }
 
 PRECEDENCE = {
@@ -175,6 +179,16 @@ class Parser:
             self._expect_value(";")
             return {"kind": "let", "name": name, "value": value, "token": token}
 
+        if self._accept_value("array"):
+            name = self._expect_kind("identifier").value
+            self._expect_value("[")
+            size = self._expect_kind("number").value
+            self._expect_value("]")
+            self._expect_value(";")
+            if size < 1:
+                self._error(token, "array size must be positive")
+            return {"kind": "array", "name": name, "size": size, "token": token}
+
         if self._accept_value("if"):
             self._expect_value("(")
             condition = self._parse_expression()
@@ -207,11 +221,24 @@ class Parser:
             self._expect_value(";")
             return {"kind": "return", "value": value, "token": token}
 
-        if (
-            self._current().kind == "identifier"
-            and self._peek().value == "="
+        if self._current().kind == "identifier" and self._peek().value in (
+            "=",
+            "[",
         ):
             name = self._advance().value
+            if self._accept_value("["):
+                index = self._parse_expression()
+                self._expect_value("]")
+                self._expect_value("=")
+                value = self._parse_expression()
+                self._expect_value(";")
+                return {
+                    "kind": "array_assign",
+                    "name": name,
+                    "index": index,
+                    "value": value,
+                    "token": token,
+                }
             self._expect_value("=")
             value = self._parse_expression()
             self._expect_value(";")
@@ -259,6 +286,15 @@ class Parser:
             return expression
         if self._accept_kind("identifier"):
             name = token.value
+            if self._accept_value("["):
+                index = self._parse_expression()
+                self._expect_value("]")
+                return {
+                    "kind": "array_index",
+                    "name": name,
+                    "index": index,
+                    "token": token,
+                }
             if not self._accept_value("("):
                 return {"kind": "variable", "name": name, "token": token}
             arguments = []
@@ -380,11 +416,11 @@ class CodeGenerator:
 
     def _generate_function(self, function):
         self.local_offsets = {}
+        self.array_offsets = {}
+        self.array_sizes = {}
         used_names = set(function["parameters"])
-        local_names = []
-        self._collect_locals(function["body"], used_names, local_names)
-        for index, name in enumerate(local_names):
-            self.local_offsets[name] = -8 - index * 4
+        self.local_cursor = -8
+        self._allocate_locals(function["body"], used_names)
         self.parameter_offsets = {
             name: 8 + index * 4
             for index, name in enumerate(function["parameters"])
@@ -394,25 +430,35 @@ class CodeGenerator:
         self._line("    push ebp")
         self._line("    mov ebp, esp")
         self._line("    push edi")
-        if local_names:
-            self._line(f"    sub esp, {len(local_names) * 4}")
+        local_bytes = -8 - self.local_cursor
+        if local_bytes:
+            self._line(f"    sub esp, {local_bytes}")
         self._generate_statements(function["body"])
         self._emit_epilogue()
         self._line("")
 
-    def _collect_locals(self, statements, used_names, local_names):
+    def _allocate_locals(self, statements, used_names):
         for statement in statements:
-            if statement["kind"] == "let":
+            if statement["kind"] in ("let", "array"):
                 name = statement["name"]
                 if name in used_names:
                     self._error(statement["token"], f"duplicate variable {name!r}")
                 used_names.add(name)
-                local_names.append(name)
+                if statement["kind"] == "let":
+                    self.local_offsets[name] = self.local_cursor
+                    self.local_cursor -= 4
+                else:
+                    size = statement["size"]
+                    self.array_sizes[name] = size
+                    self.array_offsets[name] = (
+                        self.local_cursor - (size - 1) * 4
+                    )
+                    self.local_cursor -= size * 4
             elif statement["kind"] == "if":
-                self._collect_locals(statement["then"], used_names, local_names)
-                self._collect_locals(statement["else"], used_names, local_names)
+                self._allocate_locals(statement["then"], used_names)
+                self._allocate_locals(statement["else"], used_names)
             elif statement["kind"] == "while":
-                self._collect_locals(statement["body"], used_names, local_names)
+                self._allocate_locals(statement["body"], used_names)
 
     def _generate_statements(self, statements):
         for statement in statements:
@@ -420,9 +466,13 @@ class CodeGenerator:
             if kind == "let":
                 self._generate_expression(statement["value"])
                 self._store_variable(statement["name"], statement["token"])
+            elif kind == "array":
+                pass
             elif kind == "assign":
                 self._generate_expression(statement["value"])
                 self._store_variable(statement["name"], statement["token"])
+            elif kind == "array_assign":
+                self._store_array_element(statement)
             elif kind == "expression":
                 self._generate_statement_call(statement["value"])
             elif kind == "return":
@@ -510,6 +560,8 @@ class CodeGenerator:
             self._line(f"    mov eax, {expression['value']}")
         elif kind == "variable":
             self._load_variable(expression["name"], expression["token"])
+        elif kind == "array_index":
+            self._load_array_element(expression)
         elif kind == "unary":
             self._generate_expression(expression["value"])
             if expression["operator"] == "-":
@@ -573,6 +625,31 @@ class CodeGenerator:
             self._line(f"    push dword {prompt} - image_start")
             self._line("    call __high_read_number")
             self._discard_arguments(2)
+        elif name == "read_line":
+            self._check_arity(expression, 2)
+            self._check_string_argument(expression, 0)
+            self._check_constant_integer_argument(expression, 1, 1, 127)
+            self._push_arguments(arguments)
+            self._line("    call __high_read_line")
+            self._discard_arguments(2)
+        elif name == "starts_with":
+            self._check_arity(expression, 2)
+            self._check_string_argument(expression, 1)
+            self._push_arguments(arguments)
+            self._line("    call __high_starts_with")
+            self._discard_arguments(2)
+        elif name == "equals":
+            self._check_arity(expression, 2)
+            self._check_string_argument(expression, 1)
+            self._push_arguments(arguments)
+            self._line("    call __high_equals")
+            self._discard_arguments(2)
+        elif name == "parse_int":
+            self._check_arity(expression, 2)
+            self._check_constant_integer_argument(expression, 1, 0, 127)
+            self._push_arguments(arguments)
+            self._line("    call __high_parse_int")
+            self._discard_arguments(2)
         elif name in BUILTINS:
             self._error(
                 expression["token"],
@@ -615,6 +692,56 @@ class CodeGenerator:
         for argument in expression["arguments"]:
             if argument["kind"] == "string":
                 self._error(expression["token"], message)
+
+    def _check_string_argument(self, expression, index):
+        if expression["arguments"][index]["kind"] != "string":
+            self._error(
+                expression["token"],
+                f"{expression['name']} expects a string literal argument",
+            )
+
+    def _check_constant_integer_argument(self, expression, index, minimum, maximum):
+        argument = expression["arguments"][index]
+        if (
+            argument["kind"] != "number"
+            or argument["value"] < minimum
+            or argument["value"] > maximum
+        ):
+            self._error(
+                expression["token"],
+                f"{expression['name']} argument {index + 1} must be a "
+                f"constant from {minimum} to {maximum}",
+            )
+
+    def _load_array_element(self, expression):
+        name = expression["name"]
+        size = self.array_sizes.get(name)
+        if size is None:
+            self._error(expression["token"], f"unknown array {name!r}")
+        self._generate_expression(expression["index"])
+        self._emit_array_bounds_check(size)
+        offset = self.array_offsets[name]
+        self._line(f"    mov eax, [ebp+eax*4{offset:+d}]")
+
+    def _store_array_element(self, statement):
+        name = statement["name"]
+        size = self.array_sizes.get(name)
+        if size is None:
+            self._error(statement["token"], f"unknown array {name!r}")
+        self._generate_expression(statement["index"])
+        self._line("    push eax")
+        self._generate_expression(statement["value"])
+        self._line("    mov ecx, eax")
+        self._line("    pop eax")
+        self._emit_array_bounds_check(size)
+        offset = self.array_offsets[name]
+        self._line(f"    mov [ebp+eax*4{offset:+d}], ecx")
+
+    def _emit_array_bounds_check(self, size):
+        self._line("    test eax, eax")
+        self._line("    js __high_array_bounds_error")
+        self._line(f"    cmp eax, {size}")
+        self._line("    jae __high_array_bounds_error")
 
     @classmethod
     def _statements_return_value(cls, statements):
@@ -784,6 +911,205 @@ class CodeGenerator:
         self._line("    ret")
         self._line("")
 
+        self._line("__high_read_line:")
+        self._line("    push ebp")
+        self._line("    mov ebp, esp")
+        self._line("    push ebx")
+        self._line("    push esi")
+        self._line("    push edi")
+        self._line("    sub esp, 8")
+        self._line("    mov dword [ebp-16], 0")
+        self._line("    mov eax, 1")
+        self._line("    mov ebx, [ebp+8]")
+        self._line("    add ebx, edi")
+        self._line("    int 0x80")
+        self._line("__high_read_line_key:")
+        self._line("    mov eax, 2")
+        self._line("    int 0x80")
+        self._line("    test eax, eax")
+        self._line("    jz __high_read_line_key")
+        self._line("    cmp al, 0x1C")
+        self._line("    je __high_read_line_done")
+        self._line("    cmp al, 0x0E")
+        self._line("    je __high_read_line_backspace")
+        self._line("    cmp al, 0x39")
+        self._line("    je __high_read_line_space")
+        self._line("    cmp al, 0x02")
+        self._line("    jb __high_read_line_key")
+        self._line("    cmp al, 0x0B")
+        self._line("    jbe __high_read_line_digit")
+        self._line("    cmp al, 0x10")
+        self._line("    jb __high_read_line_key")
+        self._line("    cmp al, 0x19")
+        self._line("    jbe __high_read_line_top_row")
+        self._line("    cmp al, 0x1E")
+        self._line("    jb __high_read_line_key")
+        self._line("    cmp al, 0x26")
+        self._line("    jbe __high_read_line_home_row")
+        self._line("    cmp al, 0x2C")
+        self._line("    jb __high_read_line_key")
+        self._line("    cmp al, 0x32")
+        self._line("    jbe __high_read_line_bottom_row")
+        self._line("    jmp __high_read_line_key")
+        self._line("__high_read_line_digit:")
+        self._line("    cmp al, 0x0B")
+        self._line("    jne __high_read_line_digit_nonzero")
+        self._line("    mov al, '0'")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_digit_nonzero:")
+        self._line("    add al, 0x2F")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_top_row:")
+        self._line("    movzx eax, byte [edi + __top_row - image_start + eax - 0x10]")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_home_row:")
+        self._line("    movzx eax, byte [edi + __home_row - image_start + eax - 0x1E]")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_bottom_row:")
+        self._line("    movzx eax, byte [edi + __bottom_row - image_start + eax - 0x2C]")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_space:")
+        self._line("    mov al, ' '")
+        self._line("__high_read_line_store:")
+        self._line("    mov ecx, [ebp-16]")
+        self._line("    cmp ecx, [ebp+12]")
+        self._line("    jae __high_read_line_key")
+        self._line("    mov [edi + __line_buffer - image_start + ecx], al")
+        self._line("    mov byte [edi + __line_buffer - image_start + ecx + 1], 0")
+        self._line("    mov [edi + __input_echo - image_start], al")
+        self._line("    mov byte [edi + __input_echo_end - image_start], 0")
+        self._line("    inc dword [ebp-16]")
+        self._line("    mov eax, 1")
+        self._line("    lea ebx, [edi + __input_echo - image_start]")
+        self._line("    int 0x80")
+        self._line("    jmp __high_read_line_key")
+        self._line("__high_read_line_backspace:")
+        self._line("    cmp dword [ebp-16], 0")
+        self._line("    je __high_read_line_key")
+        self._line("    dec dword [ebp-16]")
+        self._line("    mov ecx, [ebp-16]")
+        self._line("    mov byte [edi + __line_buffer - image_start + ecx], 0")
+        self._line("    mov eax, 1")
+        self._line("    lea ebx, [edi + __backspace_text - image_start]")
+        self._line("    int 0x80")
+        self._line("    jmp __high_read_line_key")
+        self._line("__high_read_line_done:")
+        self._line("    mov eax, 1")
+        self._line("    lea ebx, [edi + __newline_text - image_start]")
+        self._line("    int 0x80")
+        self._line("    lea eax, [edi + __line_buffer - image_start]")
+        self._line("    lea esp, [ebp-12]")
+        self._line("    pop edi")
+        self._line("    pop esi")
+        self._line("    pop ebx")
+        self._line("    pop ebp")
+        self._line("    ret")
+        self._line("")
+
+        self._line("__high_starts_with:")
+        self._line("    push ebp")
+        self._line("    mov ebp, esp")
+        self._line("    push ebx")
+        self._line("    push esi")
+        self._line("    push edi")
+        self._line("    mov esi, [ebp+8]")
+        self._line("    mov ebx, [ebp+12]")
+        self._line("    add ebx, edi")
+        self._line("__high_starts_with_loop:")
+        self._line("    mov al, [ebx]")
+        self._line("    test al, al")
+        self._line("    jz __high_starts_with_true")
+        self._line("    cmp al, [esi]")
+        self._line("    jne __high_starts_with_false")
+        self._line("    inc ebx")
+        self._line("    inc esi")
+        self._line("    jmp __high_starts_with_loop")
+        self._line("__high_starts_with_true:")
+        self._line("    mov eax, 1")
+        self._line("    jmp __high_starts_with_done")
+        self._line("__high_starts_with_false:")
+        self._line("    xor eax, eax")
+        self._line("__high_starts_with_done:")
+        self._line("    pop edi")
+        self._line("    pop esi")
+        self._line("    pop ebx")
+        self._line("    mov esp, ebp")
+        self._line("    pop ebp")
+        self._line("    ret")
+        self._line("")
+
+        self._line("__high_equals:")
+        self._line("    push ebp")
+        self._line("    mov ebp, esp")
+        self._line("    push ebx")
+        self._line("    push esi")
+        self._line("    push edi")
+        self._line("    mov esi, [ebp+8]")
+        self._line("    mov ebx, [ebp+12]")
+        self._line("    add ebx, edi")
+        self._line("__high_equals_loop:")
+        self._line("    mov al, [ebx]")
+        self._line("    cmp al, [esi]")
+        self._line("    jne __high_equals_false")
+        self._line("    test al, al")
+        self._line("    jz __high_equals_true")
+        self._line("    inc ebx")
+        self._line("    inc esi")
+        self._line("    jmp __high_equals_loop")
+        self._line("__high_equals_true:")
+        self._line("    mov eax, 1")
+        self._line("    jmp __high_equals_done")
+        self._line("__high_equals_false:")
+        self._line("    xor eax, eax")
+        self._line("__high_equals_done:")
+        self._line("    pop edi")
+        self._line("    pop esi")
+        self._line("    pop ebx")
+        self._line("    mov esp, ebp")
+        self._line("    pop ebp")
+        self._line("    ret")
+        self._line("")
+
+        self._line("__high_parse_int:")
+        self._line("    push ebp")
+        self._line("    mov ebp, esp")
+        self._line("    push ebx")
+        self._line("    push esi")
+        self._line("    push edi")
+        self._line("    mov esi, [ebp+8]")
+        self._line("    add esi, [ebp+12]")
+        self._line("    xor ebx, ebx")
+        self._line("    xor ecx, ecx")
+        self._line("__high_parse_int_loop:")
+        self._line("    movzx eax, byte [esi]")
+        self._line("    test al, al")
+        self._line("    jz __high_parse_int_done")
+        self._line("    cmp al, '0'")
+        self._line("    jb __high_parse_int_invalid")
+        self._line("    cmp al, '9'")
+        self._line("    ja __high_parse_int_invalid")
+        self._line("    imul ebx, ebx, 10")
+        self._line("    sub eax, '0'")
+        self._line("    add ebx, eax")
+        self._line("    inc esi")
+        self._line("    inc ecx")
+        self._line("    jmp __high_parse_int_loop")
+        self._line("__high_parse_int_done:")
+        self._line("    test ecx, ecx")
+        self._line("    jz __high_parse_int_invalid")
+        self._line("    mov eax, ebx")
+        self._line("    jmp __high_parse_int_return")
+        self._line("__high_parse_int_invalid:")
+        self._line("    mov eax, -1")
+        self._line("__high_parse_int_return:")
+        self._line("    pop edi")
+        self._line("    pop esi")
+        self._line("    pop ebx")
+        self._line("    mov esp, ebp")
+        self._line("    pop ebp")
+        self._line("    ret")
+        self._line("")
+
         self._line("__high_clear:")
         self._line("    mov eax, [esp+4]")
         self._line("    push edi")
@@ -817,6 +1143,14 @@ class CodeGenerator:
         self._line("    pop ebp")
         self._line("    ret")
         self._line("")
+        self._line("__high_array_bounds_error:")
+        self._line("    mov eax, 1")
+        self._line("    lea ebx, [edi + __array_error - image_start]")
+        self._line("    int 0x80")
+        self._line("    mov eax, 0")
+        self._line("    int 0x80")
+        self._line("    jmp __halt")
+        self._line("")
 
     def _generate_data(self):
         self._line("__number_buffer:")
@@ -831,6 +1165,16 @@ class CodeGenerator:
         self._line("    db 8, 0")
         self._line("__newline_text:")
         self._line("    db 10, 0")
+        self._line("__array_error:")
+        self._line('    db "High array index out of bounds.", 10, 0')
+        self._line("__line_buffer:")
+        self._line("    times 128 db 0")
+        self._line("__top_row:")
+        self._line('    db "qwertyuiop"')
+        self._line("__home_row:")
+        self._line('    db "asdfghjkl"')
+        self._line("__bottom_row:")
+        self._line('    db "zxcvbnm"')
         for value, label in self.strings.items():
             encoded = value.encode("utf-8") + b"\0"
             self._line(f"{label}:")
