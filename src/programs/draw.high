@@ -1,0 +1,6 @@
+fn main() {
+    draw_screen();
+    while (key() != 1) {
+    }
+    terminal_clear();
+}

@@ -10,7 +10,6 @@
 #define PROCESS_BASE 0x40000000
 #define PROCESS_SYSCALL_PRINT 1
 #define PROCESS_SYSCALL_KEYBOARD_READ 2
-#define PROCESS_SYSCALL_LIST_ROOT 3
 #define PROCESS_SYSCALL_EXIT 0
 #define PROCESS_KEYBOARD_QUEUE_SIZE 16
 #define PROCESS_KEYBOARD_QUEUE_MASK (PROCESS_KEYBOARD_QUEUE_SIZE - 1)
@@ -55,9 +54,10 @@ typedef struct
     unsigned int code_pages[EXECUTABLE_PAGE_COUNT];
     unsigned int stack_page_count;
     unsigned int stack_pages[PROCESS_STACK_PAGE_COUNT];
-    unsigned char keyboard_events[PROCESS_KEYBOARD_QUEUE_SIZE];
-    unsigned char keyboard_event_read;
-    unsigned char keyboard_event_write;
+    volatile unsigned char keyboard_events[PROCESS_KEYBOARD_QUEUE_SIZE];
+    volatile unsigned char keyboard_event_read;
+    volatile unsigned char keyboard_event_write;
+    char arguments[COMMAND_BUFFER_SIZE];
     char name[13];
 } Process;
 
@@ -145,6 +145,7 @@ static int process_release(Process *process, unsigned int slot)
     process->saved_stack = 0;
     process->code_size = 0;
     process->entry_offset = 0;
+    process->arguments[0] = '\0';
     return success;
 }
 
@@ -200,6 +201,21 @@ static unsigned int find_next_active_task(void)
     return current_task;
 }
 
+static int process_keyboard_try_read_scancode(
+    Process *process,
+    unsigned char *scancode)
+{
+    if (process->keyboard_event_read == process->keyboard_event_write)
+    {
+        return 0;
+    }
+
+    *scancode = process->keyboard_events[process->keyboard_event_read];
+    process->keyboard_event_read = (unsigned char)(
+        (process->keyboard_event_read + 1) & PROCESS_KEYBOARD_QUEUE_MASK);
+    return 1;
+}
+
 static void process_terminate_current(void)
 {
     if (current_task != 0 &&
@@ -247,6 +263,7 @@ void processes_initialize(void)
         processes[slot].stack_page_count = 0;
         processes[slot].keyboard_event_read = 0;
         processes[slot].keyboard_event_write = 0;
+        processes[slot].arguments[0] = '\0';
     }
 
     processes[0].state = TASK_ACTIVE;
@@ -262,6 +279,7 @@ void processes_initialize(void)
 
 enum ProcessStartResult process_start(
     const char *filename,
+    const char *arguments,
     unsigned int *process_id)
 {
     unsigned int flags = disable_interrupts();
@@ -273,8 +291,23 @@ enum ProcessStartResult process_start(
     unsigned int pid;
     unsigned int stack_top;
     unsigned int *stack;
+    unsigned int argument_length = 0;
     enum FileReadResult read_result;
     Process *process = 0;
+
+    if (arguments == 0)
+    {
+        arguments = "";
+    }
+    while (arguments[argument_length] != '\0')
+    {
+        if (argument_length == COMMAND_BUFFER_SIZE - 1)
+        {
+            restore_interrupts(flags);
+            return PROCESS_START_ARGUMENT_TOO_LONG;
+        }
+        ++argument_length;
+    }
 
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
@@ -299,6 +332,10 @@ enum ProcessStartResult process_start(
     process->stack_page_count = 0;
     process->keyboard_event_read = 0;
     process->keyboard_event_write = 0;
+    for (index = 0; index <= argument_length; ++index)
+    {
+        process->arguments[index] = arguments[index];
+    }
 
     for (index = 0; index < EXECUTABLE_PAGE_COUNT; ++index)
     {
@@ -487,6 +524,7 @@ unsigned int __cdecl process_timer_tick(unsigned int *saved_stack)
 unsigned int __cdecl process_system_call(unsigned int *saved_stack)
 {
     Process *process;
+    unsigned int task;
     unsigned int syscall_number;
 
     processes[current_task].saved_stack = saved_stack;
@@ -496,7 +534,8 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         return (unsigned int)saved_stack;
     }
 
-    process = &processes[current_task];
+    task = current_task;
+    process = &processes[task];
     syscall_number = saved_stack[11];
     if (syscall_number == PROCESS_SYSCALL_PRINT)
     {
@@ -508,22 +547,27 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     }
     else if (syscall_number == PROCESS_SYSCALL_KEYBOARD_READ)
     {
-        if (process->keyboard_event_read != process->keyboard_event_write)
+        unsigned char scancode;
+        int found = 0;
+
+        while (process_keyboard_try_read_scancode(process, &scancode))
         {
-            saved_stack[11] =
-                process->keyboard_events[process->keyboard_event_read];
-            process->keyboard_event_read = (unsigned char)(
-                (process->keyboard_event_read + 1) &
-                PROCESS_KEYBOARD_QUEUE_MASK);
+            if ((scancode & 0x80) == 0)
+            {
+                saved_stack[11] = scancode;
+                found = 1;
+                break;
+            }
         }
-        else
+        if (!found)
         {
             saved_stack[11] = 0;
         }
     }
-    else if (syscall_number == PROCESS_SYSCALL_LIST_ROOT)
+    else if (syscall_number >= PROCESS_SERVICE_LIST_ROOT &&
+        syscall_number <= PROCESS_SERVICE_BASIC_REPL)
     {
-        filesystem_list_root();
+        shell_run_service(syscall_number, process->arguments);
         saved_stack[11] = 0;
     }
     else if (syscall_number == PROCESS_SYSCALL_EXIT)
@@ -536,17 +580,33 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         process_terminate_current();
     }
 
+    if (current_task == task && processes[task].state == TASK_ACTIVE)
+    {
+        /* Blocking services may be preempted; resume at the original syscall frame. */
+        processes[task].saved_stack = saved_stack;
+        return (unsigned int)saved_stack;
+    }
+
     return (unsigned int)processes[current_task].saved_stack;
+}
+
+unsigned char process_keyboard_read_scancode(void)
+{
+    for (;;)
+    {
+        Process *process = &processes[current_task];
+        unsigned char scancode;
+
+        if (process_keyboard_try_read_scancode(process, &scancode))
+        {
+            return scancode;
+        }
+    }
 }
 
 void process_keyboard_scancode(unsigned char scancode)
 {
     unsigned int slot;
-
-    if ((scancode & 0x80) != 0)
-    {
-        return;
-    }
 
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {

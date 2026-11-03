@@ -28,6 +28,7 @@ enum ProcessStartResult
 {
     PROCESS_START_OK,
     PROCESS_START_INVALID_NAME,
+    PROCESS_START_ARGUMENT_TOO_LONG,
     PROCESS_START_NOT_FOUND,
     PROCESS_START_TOO_LARGE,
     PROCESS_START_DISK_ERROR,
@@ -35,6 +36,18 @@ enum ProcessStartResult
     PROCESS_START_NO_MEMORY,
     PROCESS_START_LIMIT_REACHED,
     PROCESS_START_CLEANUP_ERROR
+};
+
+enum ProcessService
+{
+    PROCESS_SERVICE_LIST_ROOT = 3,
+    PROCESS_SERVICE_CLOCK,
+    PROCESS_SERVICE_MEMORY_REPORT,
+    PROCESS_SERVICE_LIST_PROCESSES,
+    PROCESS_SERVICE_MAKE_DIRECTORY,
+    PROCESS_SERVICE_TERMINAL_CLEAR,
+    PROCESS_SERVICE_DRAW_CIRCLE,
+    PROCESS_SERVICE_BASIC_REPL
 };
 
 void terminal_write_character(char character);
@@ -49,9 +62,12 @@ void interrupts_initialize(void);
 void processes_initialize(void);
 enum ProcessStartResult process_start(
     const char *filename,
+    const char *arguments,
     unsigned int *process_id);
 void process_list(void);
 int process_has_active_process(void);
+unsigned char process_keyboard_read_scancode(void);
+void shell_run_service(unsigned int service, const char *arguments);
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack);
 unsigned int __cdecl process_system_call(unsigned int *saved_stack);
 void process_keyboard_scancode(unsigned char scancode);
@@ -82,6 +98,11 @@ char keyboard_read_character(
     unsigned char *shift_pressed,
     unsigned char *caps_lock,
     unsigned char *extended);
+char keyboard_decode_scancode(
+    unsigned char scancode,
+    unsigned char *shift_pressed,
+    unsigned char *caps_lock,
+    unsigned char *extended);
 
 void filesystem_list_root(void);
 enum FileReadResult filesystem_read_root_file(
@@ -92,9 +113,6 @@ enum FileReadResult filesystem_read_root_file(
 enum CreateDirectoryResult filesystem_create_root_directory(
     const char *name);
 
-void basic_repl(
-    unsigned char *shift_pressed,
-    unsigned char *caps_lock,
-    unsigned char *extended);
+void basic_repl(void);
 
 #endif

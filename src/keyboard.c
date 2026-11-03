@@ -88,6 +88,65 @@ static char translate_scancode(
     return character;
 }
 
+char keyboard_decode_scancode(
+    unsigned char scancode,
+    unsigned char *shift_pressed,
+    unsigned char *caps_lock,
+    unsigned char *extended)
+{
+    if (*extended)
+    {
+        *extended = 0;
+        return '\0';
+    }
+
+    if (scancode == 0xE0)
+    {
+        *extended = 1;
+        return '\0';
+    }
+
+    if (scancode == 0x2A || scancode == 0x36)
+    {
+        *shift_pressed = 1;
+        return '\0';
+    }
+
+    if (scancode == 0xAA || scancode == 0xB6)
+    {
+        *shift_pressed = 0;
+        return '\0';
+    }
+
+    if ((scancode & 0x80) != 0)
+    {
+        return '\0';
+    }
+
+    if (scancode == 0x3A)
+    {
+        *caps_lock = (unsigned char)!*caps_lock;
+        return '\0';
+    }
+
+    if (scancode == 0x1C)
+    {
+        return '\n';
+    }
+
+    if (scancode == 0x01)
+    {
+        return '\x1B';
+    }
+
+    if (scancode == 0x0E)
+    {
+        return '\b';
+    }
+
+    return translate_scancode(scancode, *shift_pressed, *caps_lock);
+}
+
 char keyboard_read_character(
     unsigned char *shift_pressed,
     unsigned char *caps_lock,
@@ -96,6 +155,7 @@ char keyboard_read_character(
     for (;;)
     {
         unsigned char scancode;
+        char character;
 
         while (keyboard_queue_read == keyboard_queue_write)
         {
@@ -104,57 +164,11 @@ char keyboard_read_character(
         scancode = keyboard_queue[keyboard_queue_read];
         keyboard_queue_read = (unsigned char)(
             (keyboard_queue_read + 1) & KEYBOARD_QUEUE_MASK);
-
-        if (*extended)
+        character = keyboard_decode_scancode(
+            scancode, shift_pressed, caps_lock, extended);
+        if (character != '\0')
         {
-            *extended = 0;
-            continue;
+            return character;
         }
-
-        if (scancode == 0xE0)
-        {
-            *extended = 1;
-            continue;
-        }
-
-        if (scancode == 0x2A || scancode == 0x36)
-        {
-            *shift_pressed = 1;
-            continue;
-        }
-
-        if (scancode == 0xAA || scancode == 0xB6)
-        {
-            *shift_pressed = 0;
-            continue;
-        }
-
-        if ((scancode & 0x80) != 0)
-        {
-            continue;
-        }
-
-        if (scancode == 0x3A)
-        {
-            *caps_lock = (unsigned char)!*caps_lock;
-            continue;
-        }
-
-        if (scancode == 0x1C)
-        {
-            return '\n';
-        }
-
-        if (scancode == 0x01)
-        {
-            return '\x1B';
-        }
-
-        if (scancode == 0x0E)
-        {
-            return '\b';
-        }
-
-        return translate_scancode(scancode, *shift_pressed, *caps_lock);
     }
 }

@@ -60,11 +60,15 @@ executables use the MinOS `MEXE` format: a 12-byte header (`MEXE`, 32-bit
 image size, and 32-bit entry offset) followed by flat 32-bit x86 code. The
 kernel loads images up to 64 KiB from the ext2 root directory. The ext2
 filesystem uses 1 KiB blocks and is stored directly after the boot sector and
-kernel, without an MBR partition table. The kernel supports root-directory
-listing and directory creation with `mkdir`. `src\programs\hello.high` is
+kernel, without an MBR partition table. Kernel services support root-directory
+listing and directory creation for the High-language programs.
+`src\programs\hello.high` is
 compiled to `HELLO.EXE` during the build and included in the image. Shared
 interfaces are declared in `src\kernel.h`. The print call uses `EAX=1` and a
-null-terminated string pointer in `EBX`; `EAX=0` exits the process.
+null-terminated string pointer in `EBX`; `EAX=0` exits the process. The
+`hostname`, `time`, `mem`, `ps`, `ls`, `mkdir`, `clear`, `draw`, and `basic`
+commands are High-language programs which use kernel services for OS
+operations; `echo` remains a built-in shell command.
 `src\programs\countdown.high` is compiled as `COUNTDOWN.EXE`; execute it to print
 the numbers 10 through 1.
 `src\programs\paint.high` is compiled as `PAINT.EXE`; execute `PAINT.EXE` to draw
@@ -82,10 +86,10 @@ position and direction; press Escape to exit.
 Supported shell commands:
 
 - `echo <text>` prints its arguments.
-- `hostname` prints `minios`.
-- `time` displays the current UTC date and time from the real-time clock.
-- `mem` reports free 4 KiB pages and tests virtual page mapping.
-- `ps` lists the shell and active process/thread IDs and states.
+- `hostname` runs `HOSTNAME.EXE` and prints `minios`.
+- `time` runs `TIME.EXE` to display the current UTC date and time.
+- `mem` runs `MEM.EXE` to report free 4 KiB pages and test virtual mapping.
+- `ps` runs `PS.EXE` to list process/thread IDs and states.
 - Enter an executable name such as `HELLO.EXE` (or `HELLO`) to start it.
   The included program prints a hello message and exits.
 - Enter `COUNTDOWN.EXE` to print 10 through 1.
@@ -97,17 +101,17 @@ Supported shell commands:
   direction. Press Escape to return to the shell.
 - Enter `PAINT.EXE` to run the included drawing program. Press Escape to
   return to the shell.
-- `ls` runs `LS.EXE`, a High-language program that lists the root directory
-  using the same output format as the shell's former built-in.
-- `mkdir <name>` creates a root directory. Names may contain 1-8 letters,
-  digits, underscores, or hyphens.
-- `clear` clears the screen.
-- `draw` draws a red circle on a white background at 1280x720 resolution.
+- `ls` runs `LS.EXE` to list the root directory.
+- `mkdir <name>` runs `MKDIR.EXE` to create a root directory. Names may contain
+  1-8 letters, digits, underscores, or hyphens.
+- `clear` runs `CLEAR.EXE` to clear the screen.
+- `draw` runs `DRAW.EXE` to draw a red circle on a white background at
+  1280x720 resolution.
   Press Escape to return to the bitmap-character shell.
-- `basic` opens a line-numbered BASIC interpreter. Enter numbered lines to
+- `basic` runs `BASIC.EXE`, which opens a line-numbered BASIC interpreter.
+  Enter numbered lines to
   write a program, then use `RUN`, `LIST`, `NEW`, or `EXIT`. Programs support
   `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`, `END`, and integer expressions.
-- `help` lists the available commands.
 
 The build writes its intermediate files and disk image to `build\`. MSVC
 links the kernel at a fixed 32-bit address; keep the loaded code small and

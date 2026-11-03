@@ -1,7 +1,7 @@
 #include <intrin.h>
 #include "kernel.h"
 
-#define FILESYSTEM_START_SECTOR 137
+#define FILESYSTEM_START_SECTOR 145
 #define DISK_SECTOR_COUNT 32768
 #define SECTOR_SIZE 512
 #define EXT2_BLOCK_SIZE 1024

@@ -71,6 +71,12 @@ arithmetic. `//` and `#` start comments. Strings support `\n`, `\r`, `\t`,
   timestamp counter; `limit` must be a positive constant.
 - `list_root();` asks the kernel to list the root directory using the shell's
   existing `ls` output format.
+- `clock();`, `memory_report();`, and `process_list();` show the current time,
+  memory status, and active processes.
+- `make_directory();` creates a root directory using the command-line arguments
+  supplied when the program was launched.
+- `terminal_clear();`, `draw_screen();`, and `basic_repl();` invoke the
+  terminal-clear, graphics, and BASIC-interpreter kernel services.
 - `clear(color);` fills the 1280x720 framebuffer with an 8-bit palette color.
 - `pixel(x, y, color);` draws one pixel when the coordinates are on screen.
 

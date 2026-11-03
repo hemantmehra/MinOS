@@ -1,0 +1,4 @@
+fn main() {
+    print("BASIC: enter numbered lines; RUN, LIST, NEW, or EXIT.\n");
+    basic_repl();
+}

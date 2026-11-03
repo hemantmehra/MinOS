@@ -15,18 +15,36 @@ TOKEN_PATTERN = re.compile(
 )
 
 BUILTINS = {
+    "basic_repl": (0, "statement"),
     "clear": (1, "statement"),
+    "clock": (0, "statement"),
+    "draw_screen": (0, "statement"),
     "equals": (2, "expression"),
     "key": (0, "expression"),
     "list_root": (0, "statement"),
+    "make_directory": (0, "statement"),
+    "memory_report": (0, "statement"),
     "parse_int": (2, "expression"),
     "pixel": (3, "statement"),
     "print": (1, "statement"),
     "print_num": (1, "statement"),
+    "process_list": (0, "statement"),
     "random": (1, "expression"),
     "read_number": (2, "expression"),
     "read_line": (2, "expression"),
     "starts_with": (2, "expression"),
+    "terminal_clear": (0, "statement"),
+}
+
+SYSTEM_SERVICES = {
+    "list_root": 3,
+    "clock": 4,
+    "memory_report": 5,
+    "process_list": 6,
+    "make_directory": 7,
+    "terminal_clear": 8,
+    "draw_screen": 9,
+    "basic_repl": 10,
 }
 
 PRECEDENCE = {
@@ -546,9 +564,9 @@ class CodeGenerator:
             self._line(f"    call __high_{name}")
             self._discard_arguments(expected)
             return
-        if name == "list_root":
+        if name in SYSTEM_SERVICES:
             self._check_arity(expression, 0)
-            self._line("    mov eax, 3")
+            self._line(f"    mov eax, {SYSTEM_SERVICES[name]}")
             self._line("    int 0x80")
             return
         if name in BUILTINS:

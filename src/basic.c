@@ -593,8 +593,14 @@ static void basic_read_line(
     terminal_write(prompt);
     for (;;)
     {
-        character = keyboard_read_character(
-            shift_pressed, caps_lock, extended);
+        do
+        {
+            character = keyboard_decode_scancode(
+                process_keyboard_read_scancode(),
+                shift_pressed,
+                caps_lock,
+                extended);
+        } while (character == '\0');
         if (character == '\n')
         {
             terminal_write("\n");
@@ -619,18 +625,21 @@ static void basic_read_line(
     }
 }
 
-void basic_repl(
-    unsigned char *shift_pressed,
-    unsigned char *caps_lock,
-    unsigned char *extended)
+void basic_repl(void)
 {
     char input[COMMAND_BUFFER_SIZE];
+    unsigned char shift_pressed = 0;
+    unsigned char caps_lock = 0;
+    unsigned char extended = 0;
+
+    /* The system-call interrupt gate disables IRQs; BASIC waits on keyboard IRQs. */
+    __asm sti
 
     for (;;)
     {
         const char *cursor;
         basic_read_line(
-            input, "basic> ", shift_pressed, caps_lock, extended);
+            input, "basic> ", &shift_pressed, &caps_lock, &extended);
         cursor = input;
         basic_skip_spaces(&cursor);
         if (*cursor == '\0')
@@ -674,4 +683,3 @@ void basic_repl(
         }
     }
 }
-
