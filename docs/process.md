@@ -103,3 +103,15 @@ successfully freed.
 The loader uses the same cleanup path if loading or executable validation
 fails partway through. In that case the shell reports the specific start
 failure and remains available.
+
+## File services
+
+| `EAX` | Operation | Arguments / result |
+|---|---|---|
+| `18` | Open file | Path in `EBX`; returns a handle or `-1` |
+| `19` | Read file | Handle in `EBX`, integer buffer in `ECX`, capacity up to 256 in `EDX`; returns bytes, `0` at end, or `-1` |
+| `20` | Close file | Handle in `EBX` |
+
+File paths may be absolute or relative to the shared current directory. Reads
+return byte values in a validated integer buffer. Open files are closed
+automatically when the owning process exits.

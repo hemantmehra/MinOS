@@ -1,0 +1,34 @@
+fn main() {
+    array path[128];
+    array contents[256];
+    let argument_length = read_arguments(path);
+    let file = -1;
+    let count = 0;
+    let index = 0;
+
+    if (argument_length <= 0) {
+        print("Usage: cat <file>\n");
+        return;
+    }
+
+    file = open_file(path);
+    if (file < 0) {
+        print("cat: could not open file.\n");
+        return;
+    }
+
+    count = read_file(file, contents);
+    while (count > 0) {
+        index = 0;
+        while (index < count) {
+            print_char(contents[index]);
+            index = index + 1;
+        }
+        count = read_file(file, contents);
+    }
+
+    close_file(file);
+    if (count < 0) {
+        print("\ncat: could not read file.\n");
+    }
+}

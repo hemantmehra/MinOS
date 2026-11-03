@@ -1,7 +1,7 @@
 #include <intrin.h>
 #include "kernel.h"
 
-#define FILESYSTEM_START_SECTOR 153
+#define FILESYSTEM_START_SECTOR 161
 #define DISK_SECTOR_COUNT 32768
 #define SECTOR_SIZE 512
 #define EXT2_BLOCK_SIZE 1024
@@ -21,6 +21,7 @@
 #define EXT2_INODE_FIRST_NONRESERVED 11
 #define EXT2_POINTERS_PER_BLOCK (EXT2_BLOCK_SIZE / 4)
 #define EXT2_DIRECTORY_STREAM_LIMIT 8
+#define EXT2_FILE_STREAM_LIMIT 8
 #define ATA_DATA_PORT 0x1F0
 #define ATA_SECTOR_COUNT_PORT 0x1F2
 #define ATA_LBA_LOW_PORT 0x1F3
@@ -87,6 +88,15 @@ typedef struct
     Ext2DirectoryIterator iterator;
 } Ext2DirectoryStream;
 
+typedef struct
+{
+    unsigned int owner;
+    unsigned int position;
+    int active;
+    Ext2FileSystem filesystem;
+    Ext2Inode inode;
+} Ext2FileStream;
+
 enum FileSystemError
 {
     FILESYSTEM_OK,
@@ -96,6 +106,7 @@ enum FileSystemError
 };
 
 static Ext2DirectoryStream directory_streams[EXT2_DIRECTORY_STREAM_LIMIT];
+static Ext2FileStream file_streams[EXT2_FILE_STREAM_LIMIT];
 static char current_directory_path[FILESYSTEM_PATH_MAX + 1] = "/";
 
 static void ata_delay_400ns(void)
@@ -1185,6 +1196,22 @@ static int ext2_normalize_directory_path(
     return 1;
 }
 
+static void ext2_copy_inode(
+    Ext2Inode *destination,
+    const Ext2Inode *source)
+{
+    volatile unsigned char *target =
+        (volatile unsigned char *)destination;
+    const volatile unsigned char *origin =
+        (const volatile unsigned char *)source;
+    unsigned int index;
+
+    for (index = 0; index < sizeof(Ext2Inode); ++index)
+    {
+        target[index] = origin[index];
+    }
+}
+
 static int ext2_lookup_directory_path(
     const Ext2FileSystem *filesystem,
     const char *path,
@@ -1237,7 +1264,7 @@ static int ext2_lookup_directory_path(
                 {
                     return 0;
                 }
-                *directory_inode = child_inode;
+                ext2_copy_inode(directory_inode, &child_inode);
                 found = 1;
                 break;
             }
@@ -1248,6 +1275,86 @@ static int ext2_lookup_directory_path(
         }
     }
     return 1;
+}
+
+static int ext2_lookup_file_path(
+    const Ext2FileSystem *filesystem,
+    const char *path,
+    Ext2Inode *file_inode)
+{
+    char parent_path[FILESYSTEM_PATH_MAX + 1];
+    volatile char *parent_output = parent_path;
+    unsigned int path_length = 0;
+    unsigned int last_separator = 0;
+    unsigned int name_length;
+    unsigned int index;
+    Ext2Inode parent_inode;
+    Ext2DirectoryIterator iterator;
+    Ext2DirectoryEntry entry;
+    int result;
+
+    while (path[path_length] != '\0')
+    {
+        ++path_length;
+    }
+    if (path_length <= 1)
+    {
+        return 0;
+    }
+    for (index = 1; index < path_length; ++index)
+    {
+        if (path[index] == '/')
+        {
+            last_separator = index;
+        }
+    }
+    name_length = path_length - last_separator - 1;
+    if (name_length == 0)
+    {
+        return 0;
+    }
+
+    for (index = 0; index < last_separator; ++index)
+    {
+        parent_output[index] = path[index];
+    }
+    if (last_separator == 0)
+    {
+        parent_output[0] = '/';
+        parent_output[1] = '\0';
+    }
+    else
+    {
+        parent_output[last_separator] = '\0';
+    }
+    if (!ext2_lookup_directory_path(
+        filesystem, parent_path, &parent_inode))
+    {
+        return 0;
+    }
+
+    iterator.byte_offset = 0;
+    iterator.loaded_block = 0xFFFFFFFF;
+    while ((result = ext2_directory_next(
+        filesystem, &parent_inode, &iterator, &entry)) > 0)
+    {
+        if (entry.inode == 0 ||
+            !ext2_name_equals(
+                entry.name,
+                entry.name_length,
+                path + last_separator + 1,
+                name_length))
+        {
+            continue;
+        }
+        if (!ext2_read_inode(filesystem, entry.inode, file_inode) ||
+            (ext2_inode_mode(file_inode) & EXT2_S_IFMT) != EXT2_S_IFREG)
+        {
+            return 0;
+        }
+        return 1;
+    }
+    return 0;
 }
 
 static int ext2_lookup_root_file(
@@ -1506,6 +1613,158 @@ void filesystem_close_process_directories(unsigned int owner)
             directory_streams[index].owner == owner)
         {
             directory_streams[index].active = 0;
+        }
+    }
+}
+
+int filesystem_open_file(unsigned int owner, const char *path)
+{
+    unsigned int index;
+    enum FileSystemError mount_result;
+    Ext2FileStream *stream = 0;
+    char normalized_path[FILESYSTEM_PATH_MAX + 1];
+
+    if (!ext2_normalize_directory_path(path, normalized_path))
+    {
+        return -1;
+    }
+
+    for (index = 0; index < EXT2_FILE_STREAM_LIMIT; ++index)
+    {
+        if (!file_streams[index].active)
+        {
+            stream = &file_streams[index];
+            break;
+        }
+    }
+    if (stream == 0)
+    {
+        return -1;
+    }
+
+    mount_result = filesystem_mount(&stream->filesystem);
+    if (mount_result != FILESYSTEM_OK ||
+        !ext2_lookup_file_path(
+            &stream->filesystem, normalized_path, &stream->inode) ||
+        stream->inode.size_high != 0)
+    {
+        return -1;
+    }
+
+    stream->owner = owner;
+    stream->position = 0;
+    stream->active = 1;
+    return (int)(index + 1);
+}
+
+int filesystem_read_file(
+    unsigned int owner,
+    unsigned int handle,
+    unsigned int *buffer,
+    unsigned int capacity)
+{
+    Ext2FileStream *stream;
+    unsigned int bytes_to_read;
+    unsigned int position;
+    unsigned int bytes_read = 0;
+
+    if (handle == 0 || handle > EXT2_FILE_STREAM_LIMIT ||
+        buffer == 0 || capacity == 0 || capacity > 256)
+    {
+        return -1;
+    }
+    stream = &file_streams[handle - 1];
+    if (!stream->active || stream->owner != owner)
+    {
+        return -1;
+    }
+    if (stream->position >= stream->inode.size)
+    {
+        return 0;
+    }
+
+    bytes_to_read = stream->inode.size - stream->position;
+    if (bytes_to_read > capacity)
+    {
+        bytes_to_read = capacity;
+    }
+    position = stream->position;
+    while (bytes_read < bytes_to_read)
+    {
+        unsigned char block[EXT2_BLOCK_SIZE];
+        unsigned int logical_block = position / EXT2_BLOCK_SIZE;
+        unsigned int block_offset = position % EXT2_BLOCK_SIZE;
+        unsigned int chunk_size = EXT2_BLOCK_SIZE - block_offset;
+        unsigned int physical_block;
+        unsigned int index;
+
+        if (chunk_size > bytes_to_read - bytes_read)
+        {
+            chunk_size = bytes_to_read - bytes_read;
+        }
+        if (!ext2_get_inode_block(
+            &stream->filesystem,
+            &stream->inode,
+            logical_block,
+            &physical_block))
+        {
+            return -1;
+        }
+        if (physical_block == 0)
+        {
+            for (index = 0; index < chunk_size; ++index)
+            {
+                buffer[bytes_read + index] = 0;
+            }
+        }
+        else
+        {
+            if (!ext2_read_block(
+                &stream->filesystem, physical_block, block))
+            {
+                return -1;
+            }
+            for (index = 0; index < chunk_size; ++index)
+            {
+                buffer[bytes_read + index] =
+                    block[block_offset + index];
+            }
+        }
+        bytes_read += chunk_size;
+        position += chunk_size;
+    }
+
+    stream->position = position;
+    return (int)bytes_read;
+}
+
+int filesystem_close_file(unsigned int owner, unsigned int handle)
+{
+    Ext2FileStream *stream;
+
+    if (handle == 0 || handle > EXT2_FILE_STREAM_LIMIT)
+    {
+        return -1;
+    }
+    stream = &file_streams[handle - 1];
+    if (!stream->active || stream->owner != owner)
+    {
+        return -1;
+    }
+    stream->active = 0;
+    return 0;
+}
+
+void filesystem_close_process_files(unsigned int owner)
+{
+    unsigned int index;
+
+    for (index = 0; index < EXT2_FILE_STREAM_LIMIT; ++index)
+    {
+        if (file_streams[index].active &&
+            file_streams[index].owner == owner)
+        {
+            file_streams[index].active = 0;
         }
     }
 }

@@ -53,7 +53,10 @@ enum ProcessService
     PROCESS_SERVICE_READ_DIR,
     PROCESS_SERVICE_READ_ARGUMENTS,
     PROCESS_SERVICE_GET_CURRENT_DIRECTORY,
-    PROCESS_SERVICE_CHANGE_DIRECTORY
+    PROCESS_SERVICE_CHANGE_DIRECTORY,
+    PROCESS_SERVICE_OPEN_FILE,
+    PROCESS_SERVICE_READ_FILE,
+    PROCESS_SERVICE_CLOSE_FILE
 };
 
 void terminal_write_character(char character);
@@ -120,6 +123,14 @@ int filesystem_read_directory(
     unsigned int capacity);
 int filesystem_close_directory(unsigned int owner, unsigned int stream);
 void filesystem_close_process_directories(unsigned int owner);
+int filesystem_open_file(unsigned int owner, const char *path);
+int filesystem_read_file(
+    unsigned int owner,
+    unsigned int handle,
+    unsigned int *buffer,
+    unsigned int capacity);
+int filesystem_close_file(unsigned int owner, unsigned int handle);
+void filesystem_close_process_files(unsigned int owner);
 int filesystem_change_directory(const char *path);
 int filesystem_get_current_directory(char *path, unsigned int capacity);
 enum FileReadResult filesystem_read_root_file(

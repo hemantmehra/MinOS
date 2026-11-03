@@ -66,8 +66,8 @@ streams and directory creation to the High-language programs.
 compiled to `HELLO.EXE` during the build and included in the image. Shared
 interfaces are declared in `src\kernel.h`. The print call uses `EAX=1` and a
 null-terminated string pointer in `EBX`; `EAX=0` exits the process. The
-`hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `mkdir`, `clear`, `draw`,
-and `basic` commands are High-language programs which use kernel services for
+`hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `cat`, `mkdir`, `clear`,
+`draw`, and `basic` commands are High-language programs which use kernel services for
 OS operations; `echo` remains a built-in shell command.
 `src\programs\countdown.high` is compiled as `COUNTDOWN.EXE`; execute it to print
 the numbers 10 through 1.
@@ -106,6 +106,7 @@ Supported shell commands:
 - `pwd` runs `PWD.EXE` to print the current directory.
 - `cd <path>` runs `CD.EXE` to change the current directory. Paths may be
   absolute or relative and support `.` and `..`.
+- `cat <file>` runs `CAT.EXE` to display a file using file stream services.
 - `mkdir <name>` runs `MKDIR.EXE` to create a root directory. Names may contain
   1-8 letters, digits, underscores, or hyphens.
 - `clear` runs `CLEAR.EXE` to clear the screen.

@@ -90,6 +90,12 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
 - `change_directory()` changes the current directory using the command-line
   path supplied when the program was launched; it returns `1` on success and
   `0` on failure. Empty paths keep the current directory.
+- `open_file(path)` opens a regular file by an absolute or current-directory-
+  relative path and returns a handle, or `-1` on failure. `read_file(handle,
+  buffer)` reads up to 256 bytes into a local integer array of at least 256
+  elements, returning the byte count, `0` at end of file, or `-1` on error.
+  `close_file(handle);` closes the file. Open files are also closed when the
+  owning process exits.
 - `clock();`, `memory_report();`, and `process_list();` show the current time,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments
@@ -103,7 +109,8 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
 `src/programs/ls.high` implements directory listing, hidden-name filtering, and
 output formatting in High, using the directory stream services. It lists the
 current directory by default and accepts an optional path. `pwd.high` prints
-the current path, and `cd.high` changes it.
+the current path, `cd.high` changes it, and `cat.high` displays a file using
+the file stream services.
 `src/programs/basic.high` implements the line editor, parser, and BASIC
 interpreter in High, using character input/output primitives. `draw.high`
 implements the circle rasterization in High, using pixel writes and graphics

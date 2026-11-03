@@ -16,6 +16,7 @@ TOKEN_PATTERN = re.compile(
 
 BUILTINS = {
     "clear": (1, "statement"),
+    "close_file": (1, "statement"),
     "closedir": (1, "statement"),
     "clock": (0, "statement"),
     "end_graphics_mode": (0, "statement"),
@@ -32,8 +33,10 @@ BUILTINS = {
     "change_directory": (0, "expression"),
     "get_current_directory": (1, "expression"),
     "opendir": (1, "expression"),
+    "open_file": (1, "expression"),
     "read_arguments": (1, "expression"),
     "read_dir": (2, "expression"),
+    "read_file": (2, "expression"),
     "random": (1, "expression"),
     "read_number": (2, "expression"),
     "read_line": (2, "expression"),
@@ -54,13 +57,16 @@ SYSTEM_SERVICES = {
     "write_character": 11,
 }
 
-DIRECTORY_SERVICES = {
+PROCESS_SERVICES = {
     "opendir": 12,
     "closedir": 13,
     "read_dir": 14,
     "read_arguments": 15,
     "get_current_directory": 16,
     "change_directory": 17,
+    "open_file": 18,
+    "read_file": 19,
+    "close_file": 20,
 }
 
 PRECEDENCE = {
@@ -587,12 +593,12 @@ class CodeGenerator:
             )
             self._line("    int 0x80")
             return
-        if name == "closedir":
+        if name in ("closedir", "close_file"):
             self._check_arity(expression, 1)
             self._check_integer_arguments(expression)
             self._generate_expression(arguments[0])
             self._line("    mov ebx, eax")
-            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
             return
         if name in ("clear", "pixel"):
@@ -767,7 +773,7 @@ class CodeGenerator:
             self._push_arguments(arguments)
             self._line("    call __high_random")
             self._discard_arguments(1)
-        elif name == "opendir":
+        elif name in ("opendir", "open_file"):
             self._check_arity(expression, 1)
             path = arguments[0]
             if path["kind"] == "string":
@@ -785,16 +791,16 @@ class CodeGenerator:
                 if array_size < 128:
                     self._error_from_expression(
                         path,
-                        "opendir path buffer must contain at least 128 elements",
+                        f"{name} path buffer must contain at least 128 elements",
                     )
                 self._line(
                     f"    lea ebx, [ebp{self.array_offsets[array_name]:+d}]"
                 )
             else:
                 self._error_from_expression(
-                    path, "opendir expects a string or local path array"
+                    path, f"{name} expects a string or local path array"
                 )
-            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
         elif name in ("read_arguments", "get_current_directory"):
             self._check_arity(expression, 1)
@@ -820,20 +826,20 @@ class CodeGenerator:
                 f"    lea ecx, [ebp{self.array_offsets[array_name]:+d}]"
             )
             self._line("    mov edx, 128")
-            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
         elif name == "change_directory":
             self._check_arity(expression, 0)
-            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
-        elif name == "read_dir":
+        elif name in ("read_dir", "read_file"):
             self._check_arity(expression, 2)
             self._check_integer_arguments(expression)
             buffer_expression = arguments[1]
             if buffer_expression["kind"] != "variable":
                 self._error_from_expression(
                     buffer_expression,
-                    "read_dir expects a local array for its name buffer",
+                    f"{name} expects a local array buffer",
                 )
             buffer_name = buffer_expression["name"]
             buffer_size = self.array_sizes.get(buffer_name)
@@ -845,7 +851,7 @@ class CodeGenerator:
             if buffer_size < 256:
                 self._error_from_expression(
                     buffer_expression,
-                    "read_dir name buffer must contain at least 256 elements",
+                    f"{name} buffer must contain at least 256 elements",
                 )
             self._generate_expression(arguments[0])
             self._line("    mov ebx, eax")
@@ -853,7 +859,7 @@ class CodeGenerator:
                 f"    lea ecx, [ebp{self.array_offsets[buffer_name]:+d}]"
             )
             self._line("    mov edx, 256")
-            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
         elif name in BUILTINS:
             self._error(

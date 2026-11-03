@@ -223,6 +223,8 @@ static void process_terminate_current(void)
     {
         filesystem_close_process_directories(
             processes[current_task].process_id);
+        filesystem_close_process_files(
+            processes[current_task].process_id);
         processes[current_task].state = TASK_DYING;
         current_task = find_next_active_task();
     }
@@ -729,6 +731,53 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     {
         saved_stack[11] = (unsigned int)filesystem_change_directory(
             process->arguments);
+    }
+    else if (syscall_number == PROCESS_SERVICE_OPEN_FILE)
+    {
+        char path[128];
+
+        if (process_copy_user_path(process, saved_stack[8], path))
+        {
+            saved_stack[11] = (unsigned int)filesystem_open_file(
+                process->process_id, path);
+        }
+        else
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_READ_FILE)
+    {
+        unsigned int capacity = saved_stack[9];
+        unsigned int buffer_size;
+
+        if (capacity > 256 ||
+            capacity > 0xFFFFFFFF / sizeof(unsigned int))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            buffer_size = capacity * sizeof(unsigned int);
+            if (!process_stack_buffer_is_valid(
+                process, saved_stack[10], buffer_size))
+            {
+                saved_stack[11] = (unsigned int)-1;
+            }
+            else
+            {
+                saved_stack[11] = (unsigned int)filesystem_read_file(
+                    process->process_id,
+                    saved_stack[8],
+                    (unsigned int *)saved_stack[10],
+                    capacity);
+            }
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_CLOSE_FILE)
+    {
+        saved_stack[11] = (unsigned int)filesystem_close_file(
+            process->process_id, saved_stack[8]);
     }
     else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
         syscall_number <= PROCESS_SERVICE_WRITE_CHARACTER)
