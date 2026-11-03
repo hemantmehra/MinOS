@@ -29,7 +29,10 @@ BUILTINS = {
     "print_char": (1, "statement"),
     "print_num": (1, "statement"),
     "process_list": (0, "statement"),
+    "change_directory": (0, "expression"),
+    "get_current_directory": (1, "expression"),
     "opendir": (1, "expression"),
+    "read_arguments": (1, "expression"),
     "read_dir": (2, "expression"),
     "random": (1, "expression"),
     "read_number": (2, "expression"),
@@ -55,6 +58,9 @@ DIRECTORY_SERVICES = {
     "opendir": 12,
     "closedir": 13,
     "read_dir": 14,
+    "read_arguments": 15,
+    "get_current_directory": 16,
+    "change_directory": 17,
 }
 
 PRECEDENCE = {
@@ -763,10 +769,62 @@ class CodeGenerator:
             self._discard_arguments(1)
         elif name == "opendir":
             self._check_arity(expression, 1)
-            self._check_string_argument(expression, 0)
-            label = self._intern_string(arguments[0]["value"])
+            path = arguments[0]
+            if path["kind"] == "string":
+                label = self._intern_string(path["value"])
+                self._line(
+                    f"    lea ebx, [edi + {label} - image_start]"
+                )
+            elif path["kind"] == "variable":
+                array_name = path["name"]
+                array_size = self.array_sizes.get(array_name)
+                if array_size is None:
+                    self._error_from_expression(
+                        path, f"unknown array {array_name!r}"
+                    )
+                if array_size < 128:
+                    self._error_from_expression(
+                        path,
+                        "opendir path buffer must contain at least 128 elements",
+                    )
+                self._line(
+                    f"    lea ebx, [ebp{self.array_offsets[array_name]:+d}]"
+                )
+            else:
+                self._error_from_expression(
+                    path, "opendir expects a string or local path array"
+                )
             self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
-            self._line(f"    lea ebx, [edi + {label} - image_start]")
+            self._line("    int 0x80")
+        elif name in ("read_arguments", "get_current_directory"):
+            self._check_arity(expression, 1)
+            array_expression = arguments[0]
+            if array_expression["kind"] != "variable":
+                self._error_from_expression(
+                    array_expression,
+                    f"{name} expects a local array",
+                )
+            array_name = array_expression["name"]
+            array_size = self.array_sizes.get(array_name)
+            if array_size is None:
+                self._error_from_expression(
+                    array_expression,
+                    f"unknown array {array_name!r}",
+                )
+            if array_size < 128:
+                self._error_from_expression(
+                    array_expression,
+                    f"{name} buffer must contain at least 128 elements",
+                )
+            self._line(
+                f"    lea ecx, [ebp{self.array_offsets[array_name]:+d}]"
+            )
+            self._line("    mov edx, 128")
+            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line("    int 0x80")
+        elif name == "change_directory":
+            self._check_arity(expression, 0)
+            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
             self._line("    int 0x80")
         elif name == "read_dir":
             self._check_arity(expression, 2)

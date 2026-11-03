@@ -60,15 +60,15 @@ executables use the MinOS `MEXE` format: a 12-byte header (`MEXE`, 32-bit
 image size, and 32-bit entry offset) followed by flat 32-bit x86 code. The
 kernel loads images up to 64 KiB from the ext2 root directory. The ext2
 filesystem uses 1 KiB blocks and is stored directly after the boot sector and
-kernel, without an MBR partition table. Kernel services support root-directory
-listing and directory creation for the High-language programs.
+kernel, without an MBR partition table. Kernel services expose directory
+streams and directory creation to the High-language programs.
 `src\programs\hello.high` is
 compiled to `HELLO.EXE` during the build and included in the image. Shared
 interfaces are declared in `src\kernel.h`. The print call uses `EAX=1` and a
 null-terminated string pointer in `EBX`; `EAX=0` exits the process. The
-`hostname`, `time`, `mem`, `ps`, `ls`, `mkdir`, `clear`, `draw`, and `basic`
-commands are High-language programs which use kernel services for OS
-operations; `echo` remains a built-in shell command.
+`hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `mkdir`, `clear`, `draw`,
+and `basic` commands are High-language programs which use kernel services for
+OS operations; `echo` remains a built-in shell command.
 `src\programs\countdown.high` is compiled as `COUNTDOWN.EXE`; execute it to print
 the numbers 10 through 1.
 `src\programs\paint.high` is compiled as `PAINT.EXE`; execute `PAINT.EXE` to draw
@@ -101,7 +101,11 @@ Supported shell commands:
   direction. Press Escape to return to the shell.
 - Enter `PAINT.EXE` to run the included drawing program. Press Escape to
   return to the shell.
-- `ls` runs `LS.EXE` to list the root directory.
+- `ls [path]` runs `LS.EXE` to list the current directory or the requested
+  absolute or relative directory path. Entries beginning with `.` are hidden.
+- `pwd` runs `PWD.EXE` to print the current directory.
+- `cd <path>` runs `CD.EXE` to change the current directory. Paths may be
+  absolute or relative and support `.` and `..`.
 - `mkdir <name>` runs `MKDIR.EXE` to create a root directory. Names may contain
   1-8 letters, digits, underscores, or hyphens.
 - `clear` runs `CLEAR.EXE` to clear the screen.

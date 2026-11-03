@@ -62,19 +62,24 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `9` | Initialize graphics output with a white framebuffer | No arguments |
 | `10` | Restore the terminal display | No arguments |
 | `11` | Write one character | Character in `EBX` |
-| `12` | Open a directory stream | `EBX` points to a null-terminated path in the executable image; returns a handle or `-1` |
+| `12` | Open a directory stream | `EBX` points to a string in the executable image or a 128-element integer path array on the process stack; returns a handle or `-1` |
 | `13` | Close a directory stream | Stream handle in `EBX` |
 | `14` | Read a directory entry | Handle in `EBX`, writable integer array in `ECX`, capacity in `EDX`; returns `1` for an entry, `0` at end, or `-1` on error |
+| `15` | Read command-line arguments | Writable integer array in `ECX`, capacity in `EDX`; returns the character count or `-1` |
+| `16` | Get current directory | Writable integer array in `ECX`, capacity in `EDX`; returns the path length or `-1` |
+| `17` | Change current directory | Uses the command-line arguments saved when the process started; returns `1` on success or `0` on failure |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;
 break scancodes have bit 7 set, and the Escape make scancode is `1`.
 Unsupported calls or invalid print requests terminate the calling process.
-Directory streams currently support the ext2 root directory (`/` or `.`). The
-kernel writes each entry name as integer character values into the caller's
-validated stack buffer. Open streams are released automatically when their
-owning process exits. Directory traversal, hidden-name filtering, and listing
-output are implemented in High; the services only open, read, and close streams.
+Directory paths support absolute and current-directory-relative paths,
+including `.` and `..`; symbolic links are not supported. The current directory
+is shared by shell-launched programs. The kernel writes each entry name as
+integer character values into the caller's validated stack buffer. Open streams
+are released automatically when their owning process exits. Directory
+traversal, hidden-name filtering, and listing output are implemented in High;
+the services only open, read, and close streams.
 Drawing, terminal input, and BASIC parsing and interpretation are also
 implemented in High; kernel services expose only graphics setup/restore and
 character output for those operations.

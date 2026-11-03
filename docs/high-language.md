@@ -75,11 +75,21 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
 - `print_char(value);` writes one character.
 - `random(limit)` returns a value from `0` to `limit - 1` using the processor's
   timestamp counter; `limit` must be a positive constant.
-- `opendir("/")` opens the ext2 root directory and returns a stream handle, or
-  `-1` on failure. `read_dir(handle, name)` reads the next name into a local
-  integer array of at least 256 elements, returning `1` for an entry, `0` at
-  end of directory, or `-1` on error. Each character is stored in one element.
-  `closedir(handle);` closes the stream. The supported paths are `/` and `.`.
+- `read_arguments(array)` copies the command-line arguments into a local
+  integer array of at least 128 elements and returns the character count, or
+  `-1` if it does not fit.
+- `opendir(path)` opens a directory by an absolute or current-directory-relative
+  path and returns a stream handle, or `-1` on failure. `path` may be a string
+  literal or a local integer array containing characters.
+- `read_dir(handle, name)` reads the next name into a local integer array of at
+  least 256 elements, returning `1` for an entry, `0` at end of directory, or
+  `-1` on error. Each character is stored in one element.
+  `closedir(handle);` closes the stream.
+- `get_current_directory(array)` writes the current absolute path into a local
+  integer array of at least 128 elements and returns its character count.
+- `change_directory()` changes the current directory using the command-line
+  path supplied when the program was launched; it returns `1` on success and
+  `0` on failure. Empty paths keep the current directory.
 - `clock();`, `memory_report();`, and `process_list();` show the current time,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments
@@ -91,7 +101,9 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
 - `pixel(x, y, color);` draws one pixel when the coordinates are on screen.
 
 `src/programs/ls.high` implements directory listing, hidden-name filtering, and
-output formatting in High, using the directory stream services.
+output formatting in High, using the directory stream services. It lists the
+current directory by default and accepts an optional path. `pwd.high` prints
+the current path, and `cd.high` changes it.
 `src/programs/basic.high` implements the line editor, parser, and BASIC
 interpreter in High, using character input/output primitives. `draw.high`
 implements the circle rasterization in High, using pixel writes and graphics

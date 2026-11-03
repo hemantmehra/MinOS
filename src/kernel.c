@@ -42,7 +42,9 @@ static void run_command(char *command)
         ++argument;
     }
     if (*argument != '\0' &&
-        !command_token_equals(command, name_end, "mkdir"))
+        !command_token_equals(command, name_end, "mkdir") &&
+        !command_token_equals(command, name_end, "ls") &&
+        !command_token_equals(command, name_end, "cd"))
     {
         terminal_write("Unknown command or executable arguments: ");
         terminal_write(command);

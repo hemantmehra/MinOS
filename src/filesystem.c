@@ -1,7 +1,7 @@
 #include <intrin.h>
 #include "kernel.h"
 
-#define FILESYSTEM_START_SECTOR 145
+#define FILESYSTEM_START_SECTOR 153
 #define DISK_SECTOR_COUNT 32768
 #define SECTOR_SIZE 512
 #define EXT2_BLOCK_SIZE 1024
@@ -16,6 +16,7 @@
 #define EXT2_S_IFDIR 0x4000
 #define EXT2_S_IFREG 0x8000
 #define EXT2_NAME_MAX 255
+#define FILESYSTEM_PATH_MAX 127
 #define EXT2_DIRECTORY_ENTRY_HEADER_SIZE 8
 #define EXT2_INODE_FIRST_NONRESERVED 11
 #define EXT2_POINTERS_PER_BLOCK (EXT2_BLOCK_SIZE / 4)
@@ -95,6 +96,7 @@ enum FileSystemError
 };
 
 static Ext2DirectoryStream directory_streams[EXT2_DIRECTORY_STREAM_LIMIT];
+static char current_directory_path[FILESYSTEM_PATH_MAX + 1] = "/";
 
 static void ata_delay_400ns(void)
 {
@@ -1076,6 +1078,178 @@ static int ext2_name_equals(
     return 1;
 }
 
+static int ext2_normalize_directory_path(
+    const char *path,
+    char normalized[FILESYSTEM_PATH_MAX + 1])
+{
+    char combined[FILESYSTEM_PATH_MAX * 2 + 2];
+    unsigned int combined_length = 0;
+    unsigned int input_index = 0;
+    unsigned int output_length = 1;
+
+    if (path == 0)
+    {
+        return 0;
+    }
+
+    if (path[0] == '\0')
+    {
+        path = current_directory_path;
+    }
+    if (path[0] != '/')
+    {
+        unsigned int cwd_index = 0;
+
+        while (current_directory_path[cwd_index] != '\0')
+        {
+            combined[combined_length++] = current_directory_path[cwd_index++];
+        }
+        if (combined_length > 1)
+        {
+            combined[combined_length++] = '/';
+        }
+    }
+    while (path[input_index] != '\0')
+    {
+        if (combined_length >= sizeof(combined))
+        {
+            return 0;
+        }
+        combined[combined_length++] = path[input_index++];
+    }
+
+    normalized[0] = '/';
+    normalized[1] = '\0';
+    input_index = 0;
+    while (input_index < combined_length)
+    {
+        unsigned int component_start;
+        unsigned int component_length;
+
+        while (input_index < combined_length &&
+            combined[input_index] == '/')
+        {
+            ++input_index;
+        }
+        component_start = input_index;
+        while (input_index < combined_length &&
+            combined[input_index] != '/')
+        {
+            ++input_index;
+        }
+        component_length = input_index - component_start;
+
+        if (component_length == 0 ||
+            (component_length == 1 &&
+                combined[component_start] == '.'))
+        {
+            continue;
+        }
+        if (component_length == 2 &&
+            combined[component_start] == '.' &&
+            combined[component_start + 1] == '.')
+        {
+            if (output_length > 1)
+            {
+                while (output_length > 1 &&
+                    normalized[output_length - 1] != '/')
+                {
+                    --output_length;
+                }
+                if (output_length > 1)
+                {
+                    --output_length;
+                }
+                normalized[output_length] = '\0';
+            }
+            continue;
+        }
+        if (component_length > EXT2_NAME_MAX ||
+            output_length + (output_length > 1 ? 1 : 0) +
+                component_length > FILESYSTEM_PATH_MAX)
+        {
+            return 0;
+        }
+        if (output_length > 1)
+        {
+            normalized[output_length++] = '/';
+        }
+        while (component_length != 0)
+        {
+            normalized[output_length++] =
+                combined[component_start++];
+            --component_length;
+        }
+        normalized[output_length] = '\0';
+    }
+    return 1;
+}
+
+static int ext2_lookup_directory_path(
+    const Ext2FileSystem *filesystem,
+    const char *path,
+    Ext2Inode *directory_inode)
+{
+    unsigned int position = 1;
+
+    if (!ext2_read_inode(
+        filesystem, EXT2_ROOT_INODE, directory_inode) ||
+        (ext2_inode_mode(directory_inode) & EXT2_S_IFMT) != EXT2_S_IFDIR)
+    {
+        return 0;
+    }
+
+    while (path[position] != '\0')
+    {
+        Ext2DirectoryIterator iterator;
+        Ext2DirectoryEntry entry;
+        Ext2Inode child_inode;
+        unsigned int component_start = position;
+        unsigned int component_length;
+        int result;
+        int found = 0;
+
+        while (path[position] != '\0' && path[position] != '/')
+        {
+            ++position;
+        }
+        component_length = position - component_start;
+        if (path[position] == '/')
+        {
+            ++position;
+        }
+        iterator.byte_offset = 0;
+        iterator.loaded_block = 0xFFFFFFFF;
+        while ((result = ext2_directory_next(
+            filesystem, directory_inode, &iterator, &entry)) > 0)
+        {
+            if (entry.inode != 0 &&
+                ext2_name_equals(
+                    entry.name,
+                    entry.name_length,
+                    path + component_start,
+                    component_length))
+            {
+                if (!ext2_read_inode(
+                    filesystem, entry.inode, &child_inode) ||
+                    (ext2_inode_mode(&child_inode) & EXT2_S_IFMT) !=
+                        EXT2_S_IFDIR)
+                {
+                    return 0;
+                }
+                *directory_inode = child_inode;
+                found = 1;
+                break;
+            }
+        }
+        if (result < 0 || !found)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int ext2_lookup_root_file(
     const Ext2FileSystem *filesystem,
     const char *name,
@@ -1171,10 +1345,9 @@ int filesystem_open_directory(unsigned int owner, const char *path)
     unsigned int index;
     enum FileSystemError mount_result;
     Ext2DirectoryStream *stream = 0;
+    char normalized_path[FILESYSTEM_PATH_MAX + 1];
 
-    if (path == 0 ||
-        !((path[0] == '/' && path[1] == '\0') ||
-            (path[0] == '.' && path[1] == '\0')))
+    if (!ext2_normalize_directory_path(path, normalized_path))
     {
         return -1;
     }
@@ -1194,9 +1367,8 @@ int filesystem_open_directory(unsigned int owner, const char *path)
 
     mount_result = filesystem_mount(&stream->filesystem);
     if (mount_result != FILESYSTEM_OK ||
-        !ext2_read_inode(
-            &stream->filesystem, EXT2_ROOT_INODE, &stream->inode) ||
-        (ext2_inode_mode(&stream->inode) & EXT2_S_IFMT) != EXT2_S_IFDIR)
+        !ext2_lookup_directory_path(
+            &stream->filesystem, normalized_path, &stream->inode))
     {
         return -1;
     }
@@ -1206,6 +1378,55 @@ int filesystem_open_directory(unsigned int owner, const char *path)
     stream->iterator.loaded_block = 0xFFFFFFFF;
     stream->active = 1;
     return (int)(index + 1);
+}
+
+int filesystem_change_directory(const char *path)
+{
+    Ext2FileSystem filesystem;
+    Ext2Inode directory_inode;
+    char normalized_path[FILESYSTEM_PATH_MAX + 1];
+
+    if (!ext2_normalize_directory_path(path, normalized_path) ||
+        filesystem_mount(&filesystem) != FILESYSTEM_OK ||
+        !ext2_lookup_directory_path(
+            &filesystem, normalized_path, &directory_inode))
+    {
+        return 0;
+    }
+
+    {
+        unsigned int index = 0;
+
+        do
+        {
+            current_directory_path[index] = normalized_path[index];
+        } while (normalized_path[index++] != '\0');
+    }
+    return 1;
+}
+
+int filesystem_get_current_directory(char *path, unsigned int capacity)
+{
+    unsigned int length = 0;
+    unsigned int index;
+
+    if (path == 0 || capacity == 0)
+    {
+        return -1;
+    }
+    while (current_directory_path[length] != '\0')
+    {
+        ++length;
+    }
+    if (length + 1 > capacity)
+    {
+        return -1;
+    }
+    for (index = 0; index <= length; ++index)
+    {
+        path[index] = current_directory_path[index];
+    }
+    return (int)length;
 }
 
 int filesystem_read_directory(

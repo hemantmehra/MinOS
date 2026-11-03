@@ -253,28 +253,6 @@ static int process_print_string(
     return 0;
 }
 
-static int process_string_is_valid(
-    const Process *process,
-    unsigned int address)
-{
-    unsigned int end = process->code_base + process->code_size;
-
-    if (address < process->code_base || address >= end)
-    {
-        return 0;
-    }
-
-    while (address < end)
-    {
-        if (*(const char *)address == '\0')
-        {
-            return 1;
-        }
-        ++address;
-    }
-    return 0;
-}
-
 static int process_stack_buffer_is_valid(
     const Process *process,
     unsigned int address,
@@ -289,6 +267,68 @@ static int process_stack_buffer_is_valid(
         address >= stack_start &&
         address < stack_end &&
         byte_count <= stack_end - address;
+}
+
+static int process_copy_user_path(
+    const Process *process,
+    unsigned int address,
+    char path[128])
+{
+    unsigned int image_end = process->code_base + process->code_size;
+    unsigned int index;
+
+    if (address >= process->code_base && address < image_end)
+    {
+        for (index = 0; index < 128 && address + index < image_end; ++index)
+        {
+            path[index] = *(const char *)(address + index);
+            if (path[index] == '\0')
+            {
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    if (!process_stack_buffer_is_valid(process, address, 128 * 4))
+    {
+        return 0;
+    }
+    for (index = 0; index < 128; ++index)
+    {
+        unsigned int character = ((const unsigned int *)address)[index];
+
+        if (character > 255)
+        {
+            return 0;
+        }
+        path[index] = (char)character;
+        if (character == 0)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int process_copy_string_to_array(
+    const char *source,
+    unsigned int *destination,
+    unsigned int capacity)
+{
+    unsigned int length = 0;
+
+    while (length < capacity && source[length] != '\0')
+    {
+        destination[length] = (unsigned char)source[length];
+        ++length;
+    }
+    if (length == capacity)
+    {
+        return -1;
+    }
+    destination[length] = 0;
+    return (int)length;
 }
 
 void processes_initialize(void)
@@ -598,10 +638,12 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     }
     else if (syscall_number == PROCESS_SERVICE_OPENDIR)
     {
-        if (process_string_is_valid(process, saved_stack[8]))
+        char path[128];
+
+        if (process_copy_user_path(process, saved_stack[8], path))
         {
             saved_stack[11] = (unsigned int)filesystem_open_directory(
-                process->process_id, (const char *)saved_stack[8]);
+                process->process_id, path);
         }
         else
         {
@@ -640,6 +682,53 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
                     capacity);
             }
         }
+    }
+    else if (syscall_number == PROCESS_SERVICE_READ_ARGUMENTS ||
+        syscall_number == PROCESS_SERVICE_GET_CURRENT_DIRECTORY)
+    {
+        unsigned int capacity = saved_stack[9];
+        unsigned int buffer_size;
+
+        if (capacity > 128 ||
+            capacity > 0xFFFFFFFF / sizeof(unsigned int))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            buffer_size = capacity * sizeof(unsigned int);
+            if (!process_stack_buffer_is_valid(
+                process, saved_stack[10], buffer_size))
+            {
+                saved_stack[11] = (unsigned int)-1;
+            }
+            else if (syscall_number == PROCESS_SERVICE_READ_ARGUMENTS)
+            {
+                saved_stack[11] = (unsigned int)
+                    process_copy_string_to_array(
+                        process->arguments,
+                        (unsigned int *)saved_stack[10],
+                        capacity);
+            }
+            else
+            {
+                char path[128];
+                int length = filesystem_get_current_directory(
+                    path, sizeof(path));
+
+                saved_stack[11] = length < 0
+                    ? (unsigned int)-1
+                    : (unsigned int)process_copy_string_to_array(
+                        path,
+                        (unsigned int *)saved_stack[10],
+                        capacity);
+            }
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_CHANGE_DIRECTORY)
+    {
+        saved_stack[11] = (unsigned int)filesystem_change_directory(
+            process->arguments);
     }
     else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
         syscall_number <= PROCESS_SERVICE_WRITE_CHARACTER)
