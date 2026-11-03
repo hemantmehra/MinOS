@@ -227,13 +227,18 @@ void shell_run_service(unsigned int service, const char *arguments)
     case PROCESS_SERVICE_TERMINAL_CLEAR:
         terminal_clear();
         break;
-    case PROCESS_SERVICE_DRAW_CIRCLE:
-        video_draw_circle();
+    case PROCESS_SERVICE_START_GRAPHICS:
+        video_start_graphics();
         break;
-    case PROCESS_SERVICE_BASIC_REPL:
-        basic_repl();
+    case PROCESS_SERVICE_END_GRAPHICS:
+        video_end_graphics();
         break;
     }
+}
+
+void process_service_write_character(char character)
+{
+    terminal_write_character(character);
 }
 
 void __cdecl kernel_main(void)

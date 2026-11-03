@@ -548,26 +548,26 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     else if (syscall_number == PROCESS_SYSCALL_KEYBOARD_READ)
     {
         unsigned char scancode;
-        int found = 0;
 
+        saved_stack[11] = 0;
         while (process_keyboard_try_read_scancode(process, &scancode))
         {
-            if ((scancode & 0x80) == 0)
-            {
-                saved_stack[11] = scancode;
-                found = 1;
-                break;
-            }
-        }
-        if (!found)
-        {
-            saved_stack[11] = 0;
+            saved_stack[11] = scancode;
+            break;
         }
     }
     else if (syscall_number >= PROCESS_SERVICE_LIST_ROOT &&
-        syscall_number <= PROCESS_SERVICE_BASIC_REPL)
+        syscall_number <= PROCESS_SERVICE_WRITE_CHARACTER)
     {
-        shell_run_service(syscall_number, process->arguments);
+        if (syscall_number == PROCESS_SERVICE_WRITE_CHARACTER)
+        {
+            process_service_write_character(
+                (char)saved_stack[8]);
+        }
+        else
+        {
+            shell_run_service(syscall_number, process->arguments);
+        }
         saved_stack[11] = 0;
     }
     else if (syscall_number == PROCESS_SYSCALL_EXIT)

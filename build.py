@@ -78,7 +78,6 @@ def run_msvc(developer_command):
         "process.c",
         "time.c",
         "shell_utils.c",
-        "basic.c",
     )
     source_paths = " ".join(f'"{ROOT / "src" / source}"' for source in sources)
     object_files = " ".join(f"{Path(source).stem}.obj" for source in sources)

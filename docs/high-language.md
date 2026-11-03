@@ -42,15 +42,15 @@ Statements include:
 - `name = expression;` to update a local or parameter.
 - `array name[size];` to declare a fixed-size local integer array. Accesses are
   bounds checked at runtime.
-- `if (condition) { ... } else { ... }` and `while (condition) { ... }`.
+- `if (condition) { ... } else { ... }`, `else if`, and `while (condition) { ... }`.
 - `return;` or `return expression;`.
 - Function calls terminated with `;`.
 
 Expressions support decimal integers, variables, function calls, parentheses,
 unary `-` and `!`, arithmetic `+`, `-`, `*`, `/`, `%`, and comparisons `==`,
-`!=`, `<`, `<=`, `>`, `>=`. Division and remainder use signed integer
-arithmetic. `//` and `#` start comments. Strings support `\n`, `\r`, `\t`,
-`\"`, and `\\` escapes.
+`!=`, `<`, `<=`, `>`, `>=`, and short-circuit `&&` and `||`. Division and
+remainder use signed integer arithmetic. `//` and `#` start comments. Strings
+support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
 
 ## Built-ins
 
@@ -60,13 +60,19 @@ arithmetic. `//` and `#` start comments. Strings support `\n`, `\r`, `\t`,
   supports Backspace, and returns the entered number after Enter.
   `max_digits` must be a constant from 1 to 9.
 - `let line = read_line("prompt", max_chars);` reads a lowercase command line,
-  echoes text, supports Backspace, and returns a pointer to its reusable input
-  buffer. `max_chars` must be a constant from 1 to 127.
+  including digits, punctuation, and Shift-modified symbols; it echoes text,
+  supports Backspace, and returns a pointer to its reusable input buffer.
+  `max_chars` must be a constant from 1 to 127.
 - `starts_with(line, "prefix")` and `equals(line, "text")` compare a line with
   a string literal.
 - `parse_int(line, offset)` parses the decimal digits at a constant offset,
   returning `-1` if no valid integer begins there.
-- `key()` returns a queued keyboard make scancode; Escape is `1`.
+- `key()` returns a queued keyboard make or break scancode; break scancodes have
+  bit 7 set, and Escape's make scancode is `1`.
+- `string_char(line, index)` returns the byte at an index from 0 to 127, or
+  zero when the index is outside that range or the pointer is outside the
+  executable image.
+- `print_char(value);` writes one character.
 - `random(limit)` returns a value from `0` to `limit - 1` using the processor's
   timestamp counter; `limit` must be a positive constant.
 - `list_root();` asks the kernel to list the root directory using the shell's
@@ -75,10 +81,16 @@ arithmetic. `//` and `#` start comments. Strings support `\n`, `\r`, `\t`,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments
   supplied when the program was launched.
-- `terminal_clear();`, `draw_screen();`, and `basic_repl();` invoke the
-  terminal-clear, graphics, and BASIC-interpreter kernel services.
+- `terminal_clear();`, `start_graphics_mode();`, and `end_graphics_mode();`
+  invoke primitive terminal and graphics services. `start_graphics_mode`
+  initializes a white framebuffer; `end_graphics_mode` restores the terminal.
 - `clear(color);` fills the 1280x720 framebuffer with an 8-bit palette color.
 - `pixel(x, y, color);` draws one pixel when the coordinates are on screen.
+
+`src/programs/basic.high` implements the line editor, parser, and BASIC
+interpreter in High, using character input/output primitives. `draw.high`
+implements the circle rasterization in High, using pixel writes and graphics
+start/restore services.
 
 Integer values use 32-bit arithmetic; `print_num` prints signed decimal values.
 Factorial is limited to 0 through 12 to fit in the kernel's 32-bit integer

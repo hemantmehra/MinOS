@@ -52,21 +52,24 @@ the current context, and the handler dispatches on the value in `EAX`:
 |---|---|---|
 | `0` | Exit the process | No arguments |
 | `1` | Print a string | `EBX` points to a null-terminated string inside the executable image |
-| `2` | Read a keyboard event | Returns a make scancode in `EAX`, or `0` if no event is queued |
+| `2` | Read a keyboard event | Returns a make or break scancode in `EAX`, or `0` if no event is queued |
 | `3` | List the ext2 root directory | No arguments |
 | `4` | Write the current UTC date and time | No arguments |
 | `5` | Report free memory and test a page mapping | No arguments |
 | `6` | List active processes and threads | No arguments |
 | `7` | Create a root directory | Uses the command-line arguments saved when the program started |
 | `8` | Clear the terminal | No arguments |
-| `9` | Draw the graphics-mode circle | No arguments |
-| `10` | Run the BASIC interpreter | Reads keyboard events until `EXIT` or `QUIT` |
+| `9` | Initialize graphics output with a white framebuffer | No arguments |
+| `10` | Restore the terminal display | No arguments |
+| `11` | Write one character | Character in `EBX` |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;
-the Escape make scancode is `1`. Unsupported calls or invalid print requests
-terminate the calling process. The corresponding High-language programs use
-these services to implement the shell commands.
+break scancodes have bit 7 set, and the Escape make scancode is `1`.
+Unsupported calls or invalid print requests terminate the calling process.
+Drawing, terminal input, and BASIC parsing and interpretation are implemented
+in High; kernel services expose only graphics setup/restore and character
+output for those operations.
 
 ## Exiting a process
 

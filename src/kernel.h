@@ -46,8 +46,9 @@ enum ProcessService
     PROCESS_SERVICE_LIST_PROCESSES,
     PROCESS_SERVICE_MAKE_DIRECTORY,
     PROCESS_SERVICE_TERMINAL_CLEAR,
-    PROCESS_SERVICE_DRAW_CIRCLE,
-    PROCESS_SERVICE_BASIC_REPL
+    PROCESS_SERVICE_START_GRAPHICS,
+    PROCESS_SERVICE_END_GRAPHICS,
+    PROCESS_SERVICE_WRITE_CHARACTER
 };
 
 void terminal_write_character(char character);
@@ -57,7 +58,8 @@ void terminal_write_unsigned(unsigned int value);
 void terminal_clear(void);
 void video_terminal_restore(void);
 void video_initialize(void);
-void video_draw_circle(void);
+void video_start_graphics(void);
+void video_end_graphics(void);
 void interrupts_initialize(void);
 void processes_initialize(void);
 enum ProcessStartResult process_start(
@@ -87,6 +89,7 @@ int memory_translate(
     unsigned int virtual_address,
     unsigned int *physical_address);
 unsigned int memory_available_pages(void);
+void process_service_write_character(char character);
 
 int is_space(char character);
 int command_equals(const char *command, const char *expected);
@@ -112,7 +115,5 @@ enum FileReadResult filesystem_read_root_file(
     unsigned int *file_size);
 enum CreateDirectoryResult filesystem_create_root_directory(
     const char *name);
-
-void basic_repl(void);
 
 #endif

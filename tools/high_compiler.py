@@ -11,14 +11,13 @@ TOKEN_PATTERN = re.compile(
     r'|(?P<string>"(?:\\.|[^"\\])*")'
     r"|(?P<number>[0-9]+)"
     r"|(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)"
-    r"|(?P<operator>==|!=|<=|>=|[{}\[\](),;=+\-*/%<>!])"
+    r"|(?P<operator>==|!=|<=|>=|&&|\|\||[{}\[\](),;=+\-*/%<>!])"
 )
 
 BUILTINS = {
-    "basic_repl": (0, "statement"),
     "clear": (1, "statement"),
     "clock": (0, "statement"),
-    "draw_screen": (0, "statement"),
+    "end_graphics_mode": (0, "statement"),
     "equals": (2, "expression"),
     "key": (0, "expression"),
     "list_root": (0, "statement"),
@@ -27,12 +26,15 @@ BUILTINS = {
     "parse_int": (2, "expression"),
     "pixel": (3, "statement"),
     "print": (1, "statement"),
+    "print_char": (1, "statement"),
     "print_num": (1, "statement"),
     "process_list": (0, "statement"),
     "random": (1, "expression"),
     "read_number": (2, "expression"),
     "read_line": (2, "expression"),
     "starts_with": (2, "expression"),
+    "start_graphics_mode": (0, "statement"),
+    "string_char": (2, "expression"),
     "terminal_clear": (0, "statement"),
 }
 
@@ -43,22 +45,25 @@ SYSTEM_SERVICES = {
     "process_list": 6,
     "make_directory": 7,
     "terminal_clear": 8,
-    "draw_screen": 9,
-    "basic_repl": 10,
+    "start_graphics_mode": 9,
+    "end_graphics_mode": 10,
+    "write_character": 11,
 }
 
 PRECEDENCE = {
-    "==": 1,
-    "!=": 1,
-    "<": 1,
-    "<=": 1,
-    ">": 1,
-    ">=": 1,
-    "+": 2,
-    "-": 2,
-    "*": 3,
-    "/": 3,
-    "%": 3,
+    "||": 0,
+    "&&": 1,
+    "==": 2,
+    "!=": 2,
+    "<": 2,
+    "<=": 2,
+    ">": 2,
+    ">=": 2,
+    "+": 3,
+    "-": 3,
+    "*": 4,
+    "/": 4,
+    "%": 4,
 }
 
 CONDITION_CODES = {
@@ -216,7 +221,10 @@ class Parser:
             then_body = self._parse_block()
             else_body = []
             if self._accept_value("else"):
-                else_body = self._parse_block()
+                if self._at_value("if"):
+                    else_body = [self._parse_statement()]
+                else:
+                    else_body = self._parse_block()
             return {
                 "kind": "if",
                 "condition": condition,
@@ -556,6 +564,16 @@ class CodeGenerator:
             self._line("    call __high_print_num")
             self._discard_arguments(1)
             return
+        if name == "print_char":
+            self._check_arity(expression, 1)
+            self._check_integer_arguments(expression)
+            self._generate_expression(arguments[0])
+            self._line("    mov ebx, eax")
+            self._line(
+                f"    mov eax, {SYSTEM_SERVICES['write_character']}"
+            )
+            self._line("    int 0x80")
+            return
         if name in ("clear", "pixel"):
             expected = 1 if name == "clear" else 3
             self._check_arity(expression, expected)
@@ -604,6 +622,36 @@ class CodeGenerator:
 
     def _generate_binary(self, expression):
         operator = expression["operator"]
+        if operator == "&&":
+            false_label = self._new_label("and_false")
+            done_label = self._new_label("and_done")
+            self._generate_expression(expression["left"])
+            self._line("    test eax, eax")
+            self._line(f"    jz {false_label}")
+            self._generate_expression(expression["right"])
+            self._line("    test eax, eax")
+            self._line("    setne al")
+            self._line("    movzx eax, al")
+            self._line(f"    jmp {done_label}")
+            self._line(f"{false_label}:")
+            self._line("    xor eax, eax")
+            self._line(f"{done_label}:")
+            return
+        if operator == "||":
+            true_label = self._new_label("or_true")
+            done_label = self._new_label("or_done")
+            self._generate_expression(expression["left"])
+            self._line("    test eax, eax")
+            self._line(f"    jnz {true_label}")
+            self._generate_expression(expression["right"])
+            self._line("    test eax, eax")
+            self._line("    setne al")
+            self._line("    movzx eax, al")
+            self._line(f"    jmp {done_label}")
+            self._line(f"{true_label}:")
+            self._line("    mov eax, 1")
+            self._line(f"{done_label}:")
+            return
         self._generate_expression(expression["left"])
         self._line("    push eax")
         self._generate_expression(expression["right"])
@@ -656,6 +704,21 @@ class CodeGenerator:
             self._check_constant_integer_argument(expression, 1, 1, 127)
             self._push_arguments(arguments)
             self._line("    call __high_read_line")
+            self._discard_arguments(2)
+        elif name == "string_char":
+            self._check_arity(expression, 2)
+            self._check_integer_arguments(expression, start=1)
+            self._generate_expression(arguments[1])
+            self._line("    push eax")
+            if arguments[0]["kind"] == "string":
+                label = self._intern_string(arguments[0]["value"])
+                self._line(
+                    f"    lea eax, [edi + {label} - image_start]"
+                )
+            else:
+                self._generate_expression(arguments[0])
+            self._line("    push eax")
+            self._line("    call __high_string_char")
             self._discard_arguments(2)
         elif name == "starts_with":
             self._check_arity(expression, 2)
@@ -720,9 +783,9 @@ class CodeGenerator:
         return function
 
     def _check_integer_arguments(
-        self, expression, message="expected an integer argument"
+        self, expression, message="expected an integer argument", start=0
     ):
-        for argument in expression["arguments"]:
+        for argument in expression["arguments"][start:]:
             if argument["kind"] == "string":
                 self._error(expression["token"], message)
 
@@ -952,6 +1015,7 @@ class CodeGenerator:
         self._line("    push edi")
         self._line("    sub esp, 8")
         self._line("    mov dword [ebp-16], 0")
+        self._line("    mov dword [ebp-20], 0")
         self._line("    mov eax, 1")
         self._line("    mov ebx, [ebp+8]")
         self._line("    add ebx, edi")
@@ -961,36 +1025,81 @@ class CodeGenerator:
         self._line("    int 0x80")
         self._line("    test eax, eax")
         self._line("    jz __high_read_line_key")
+        self._line("    cmp al, 0x2A")
+        self._line("    je __high_read_line_shift_down")
+        self._line("    cmp al, 0x36")
+        self._line("    je __high_read_line_shift_down")
+        self._line("    cmp al, 0xAA")
+        self._line("    je __high_read_line_shift_up")
+        self._line("    cmp al, 0xB6")
+        self._line("    je __high_read_line_shift_up")
+        self._line("    test al, 0x80")
+        self._line("    jnz __high_read_line_key")
+        self._line("    jmp __high_read_line_decode")
+        self._line("__high_read_line_shift_down:")
+        self._line("    mov dword [ebp-20], 1")
+        self._line("    jmp __high_read_line_key")
+        self._line("__high_read_line_shift_up:")
+        self._line("    mov dword [ebp-20], 0")
+        self._line("    jmp __high_read_line_key")
+        self._line("__high_read_line_decode:")
         self._line("    cmp al, 0x1C")
         self._line("    je __high_read_line_done")
         self._line("    cmp al, 0x0E")
         self._line("    je __high_read_line_backspace")
-        self._line("    cmp al, 0x39")
-        self._line("    je __high_read_line_space")
         self._line("    cmp al, 0x02")
         self._line("    jb __high_read_line_key")
         self._line("    cmp al, 0x0B")
         self._line("    jbe __high_read_line_digit")
+        self._line("    cmp al, 0x0C")
+        self._line("    je __high_read_line_dash")
+        self._line("    cmp al, 0x0D")
+        self._line("    je __high_read_line_equal")
         self._line("    cmp al, 0x10")
         self._line("    jb __high_read_line_key")
         self._line("    cmp al, 0x19")
         self._line("    jbe __high_read_line_top_row")
+        self._line("    cmp al, 0x1A")
+        self._line("    je __high_read_line_left_bracket")
+        self._line("    cmp al, 0x1B")
+        self._line("    je __high_read_line_right_bracket")
         self._line("    cmp al, 0x1E")
         self._line("    jb __high_read_line_key")
         self._line("    cmp al, 0x26")
         self._line("    jbe __high_read_line_home_row")
+        self._line("    cmp al, 0x27")
+        self._line("    je __high_read_line_semicolon")
+        self._line("    cmp al, 0x28")
+        self._line("    je __high_read_line_apostrophe")
+        self._line("    cmp al, 0x29")
+        self._line("    je __high_read_line_backtick")
+        self._line("    cmp al, 0x2B")
+        self._line("    je __high_read_line_backslash")
         self._line("    cmp al, 0x2C")
         self._line("    jb __high_read_line_key")
         self._line("    cmp al, 0x32")
         self._line("    jbe __high_read_line_bottom_row")
+        self._line("    cmp al, 0x33")
+        self._line("    je __high_read_line_comma")
+        self._line("    cmp al, 0x34")
+        self._line("    je __high_read_line_period")
+        self._line("    cmp al, 0x35")
+        self._line("    je __high_read_line_slash")
+        self._line("    cmp al, 0x39")
+        self._line("    je __high_read_line_space")
         self._line("    jmp __high_read_line_key")
         self._line("__high_read_line_digit:")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    jne __high_read_line_shifted_digit")
         self._line("    cmp al, 0x0B")
         self._line("    jne __high_read_line_digit_nonzero")
         self._line("    mov al, '0'")
         self._line("    jmp __high_read_line_store")
         self._line("__high_read_line_digit_nonzero:")
         self._line("    add al, 0x2F")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_shifted_digit:")
+        self._line("    movzx eax, byte [edi + __shift_digit_row - image_start + eax - 2]")
         self._line("    jmp __high_read_line_store")
         self._line("__high_read_line_top_row:")
         self._line("    movzx eax, byte [edi + __top_row - image_start + eax - 0x10]")
@@ -1000,6 +1109,72 @@ class CodeGenerator:
         self._line("    jmp __high_read_line_store")
         self._line("__high_read_line_bottom_row:")
         self._line("    movzx eax, byte [edi + __bottom_row - image_start + eax - 0x2C]")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_left_bracket:")
+        self._line("    mov al, '['")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, '{'")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_right_bracket:")
+        self._line("    mov al, ']'")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, '}'")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_dash:")
+        self._line("    mov al, '-'")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, '_'")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_equal:")
+        self._line("    mov al, '='")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, '+'")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_semicolon:")
+        self._line("    mov al, ';'")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, ':'")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_apostrophe:")
+        self._line("    mov al, 39")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, 34")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_backtick:")
+        self._line("    mov al, 96")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, 126")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_backslash:")
+        self._line("    mov al, 92")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, 124")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_comma:")
+        self._line("    mov al, ','")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, '<'")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_period:")
+        self._line("    mov al, '.'")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, '>'")
+        self._line("    jmp __high_read_line_store")
+        self._line("__high_read_line_slash:")
+        self._line("    mov al, '/'")
+        self._line("    cmp dword [ebp-20], 0")
+        self._line("    je __high_read_line_store")
+        self._line("    mov al, '?'")
         self._line("    jmp __high_read_line_store")
         self._line("__high_read_line_space:")
         self._line("    mov al, ' '")
@@ -1161,6 +1336,29 @@ class CodeGenerator:
         self._line("    ret")
         self._line("")
 
+        self._line("__high_string_char:")
+        self._line("    mov eax, [esp+8]")
+        self._line("    test eax, eax")
+        self._line("    js __high_string_char_zero")
+        self._line("    cmp eax, 127")
+        self._line("    ja __high_string_char_zero")
+        self._line("    mov ecx, [esp+4]")
+        self._line("    cmp ecx, 0x40000000")
+        self._line("    jb __high_string_char_zero")
+        self._line("    mov edx, edi")
+        self._line("    add edx, image_end - image_start")
+        self._line("    cmp ecx, edx")
+        self._line("    jae __high_string_char_zero")
+        self._line("    add ecx, eax")
+        self._line("    cmp ecx, edx")
+        self._line("    jae __high_string_char_zero")
+        self._line("    movzx eax, byte [ecx]")
+        self._line("    ret")
+        self._line("__high_string_char_zero:")
+        self._line("    xor eax, eax")
+        self._line("    ret")
+        self._line("")
+
         self._line("__high_clear:")
         self._line("    mov eax, [esp+4]")
         self._line("    push edi")
@@ -1226,6 +1424,8 @@ class CodeGenerator:
         self._line('    db "asdfghjkl"')
         self._line("__bottom_row:")
         self._line('    db "zxcvbnm"')
+        self._line("__shift_digit_row:")
+        self._line('    db "!@#$%^&*()"')
         for value, label in self.strings.items():
             encoded = value.encode("utf-8") + b"\0"
             self._line(f"{label}:")

@@ -34,8 +34,8 @@ directories. The kernel supports listing and root-level directory creation.
 All operating-system source code is under `src\`. Kernel code is organized by
 subsystem: `src\kernel.c` handles shell dispatch, `src\video.c` renders the
 VGA terminal, `src\keyboard.c` reads keyboard input, `src\filesystem.c`
-implements ext2 access, `src\basic.c` contains the BASIC interpreter,
-`src\interrupts.c` sets up the IDT and keyboard IRQ, `src\time.c` reads the
+implements ext2 access, `src\interrupts.c` sets up the IDT and keyboard IRQ,
+`src\time.c` reads the
 CMOS real-time clock, `src\memory.c` initializes x86 paging and manages 4 KiB
 physical pages, and `src\shell_utils.c` provides shared shell helpers. The
 boot sector is `src\boot.asm`; bundled program sources are in
@@ -105,13 +105,12 @@ Supported shell commands:
 - `mkdir <name>` runs `MKDIR.EXE` to create a root directory. Names may contain
   1-8 letters, digits, underscores, or hyphens.
 - `clear` runs `CLEAR.EXE` to clear the screen.
-- `draw` runs `DRAW.EXE` to draw a red circle on a white background at
-  1280x720 resolution.
-  Press Escape to return to the bitmap-character shell.
+- `draw` runs `DRAW.EXE`, which draws a red circle on white in High and uses
+  primitive graphics start/end services. Press Escape to return to the shell.
 - `basic` runs `BASIC.EXE`, which opens a line-numbered BASIC interpreter.
-  Enter numbered lines to
-  write a program, then use `RUN`, `LIST`, `NEW`, or `EXIT`. Programs support
-  `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`, `END`, and integer expressions.
+  The interpreter is implemented in High; it supports numbered lines,
+  `RUN`, `LIST`, `NEW`, `EXIT`, `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`,
+  `END`, `STOP`, and integer expressions.
 
 The build writes its intermediate files and disk image to `build\`. MSVC
 links the kernel at a fixed 32-bit address; keep the loaded code small and

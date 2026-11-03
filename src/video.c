@@ -470,10 +470,14 @@ static void graphics_draw_circle(
     }
 }
 
-void video_draw_circle(void)
+void video_start_graphics(void)
 {
     vga_fill_screen(15);
-    graphics_draw_circle(640, 360, 140, 12);
+}
+
+void video_end_graphics(void)
+{
+    vga_render_terminal();
 }
 
 void video_terminal_restore(void)
