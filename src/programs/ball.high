@@ -1,0 +1,66 @@
+fn main() {
+    let radius = 24;
+    let x = random(1233) + radius;
+    let y = random(673) + radius;
+    let velocity_x = (random(2) * 2 - 1) * 5;
+    let velocity_y = (random(2) * 2 - 1) * 5;
+    let key_code = 0;
+    let running = 1;
+
+    while (running != 0) {
+        key_code = key();
+        if (key_code == 1) {
+            running = 0;
+        } else {
+            clear(15);
+            draw_ball(x, y, radius);
+
+            x = x + velocity_x;
+            y = y + velocity_y;
+            if (x < radius) {
+                x = radius;
+                velocity_x = 0 - velocity_x;
+            }
+            if (x > 1280 - radius) {
+                x = 1280 - radius;
+                velocity_x = 0 - velocity_x;
+            }
+            if (y < radius) {
+                y = radius;
+                velocity_y = 0 - velocity_y;
+            }
+            if (y > 720 - radius) {
+                y = 720 - radius;
+                velocity_y = 0 - velocity_y;
+            }
+
+            wait_frame();
+        }
+    }
+}
+
+fn draw_ball(center_x, center_y, radius) {
+    let x = 0 - radius;
+    let y = 0 - radius;
+    let distance = 0;
+    let radius_squared = radius * radius;
+
+    while (y <= radius) {
+        x = 0 - radius;
+        while (x <= radius) {
+            distance = x * x + y * y;
+            if (distance <= radius_squared) {
+                pixel(center_x + x, center_y + y, 12);
+            }
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+fn wait_frame() {
+    let count = 0;
+    while (count < 30000) {
+        count = count + 1;
+    }
+}

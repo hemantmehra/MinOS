@@ -75,6 +75,9 @@ restore the shell display. Applications can poll keyboard scancodes with
 a number from 0 to 12 to display its factorial.
 `src\programs\stack.high` is compiled as `STACK.EXE`; it provides `push <n>`,
 `pop`, `top`, and `exit` commands using a 100-element integer array.
+`src\programs\ball.high` is compiled as `BALL.EXE`; it animates a red ball
+that bounces off the screen edges. Each launch chooses a random starting
+position and direction; press Escape to exit.
 
 Supported shell commands:
 
@@ -90,6 +93,8 @@ Supported shell commands:
   factorial.
 - Enter `STACK.EXE` to use a 100-item stack with `push <n>`, `pop`, `top`,
   and `exit` commands.
+- Enter `BALL.EXE` to watch a red ball bounce from a randomized position and
+  direction. Press Escape to return to the shell.
 - Enter `PAINT.EXE` to run the included drawing program. Press Escape to
   return to the shell.
 - `ls` lists files in the current root directory.

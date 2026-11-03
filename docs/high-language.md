@@ -67,6 +67,8 @@ arithmetic. `//` and `#` start comments. Strings support `\n`, `\r`, `\t`,
 - `parse_int(line, offset)` parses the decimal digits at a constant offset,
   returning `-1` if no valid integer begins there.
 - `key()` returns a queued keyboard make scancode; Escape is `1`.
+- `random(limit)` returns a value from `0` to `limit - 1` using the processor's
+  timestamp counter; `limit` must be a positive constant.
 - `clear(color);` fills the 1280x720 framebuffer with an 8-bit palette color.
 - `pixel(x, y, color);` draws one pixel when the coordinates are on screen.
 

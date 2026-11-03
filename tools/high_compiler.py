@@ -22,6 +22,7 @@ BUILTINS = {
     "pixel": (3, "statement"),
     "print": (1, "statement"),
     "print_num": (1, "statement"),
+    "random": (1, "expression"),
     "read_number": (2, "expression"),
     "read_line": (2, "expression"),
     "starts_with": (2, "expression"),
@@ -650,6 +651,14 @@ class CodeGenerator:
             self._push_arguments(arguments)
             self._line("    call __high_parse_int")
             self._discard_arguments(2)
+        elif name == "random":
+            self._check_arity(expression, 1)
+            self._check_constant_integer_argument(
+                expression, 0, 1, 0x7FFFFFFF
+            )
+            self._push_arguments(arguments)
+            self._line("    call __high_random")
+            self._discard_arguments(1)
         elif name in BUILTINS:
             self._error(
                 expression["token"],
@@ -1105,6 +1114,24 @@ class CodeGenerator:
         self._line("    pop edi")
         self._line("    pop esi")
         self._line("    pop ebx")
+        self._line("    mov esp, ebp")
+        self._line("    pop ebp")
+        self._line("    ret")
+        self._line("")
+
+        self._line("__high_random:")
+        self._line("    push ebp")
+        self._line("    mov ebp, esp")
+        self._line("    push ecx")
+        self._line("    push edx")
+        self._line("    mov ecx, [ebp+8]")
+        self._line("    rdtsc")
+        self._line("    xor eax, edx")
+        self._line("    xor edx, edx")
+        self._line("    div ecx")
+        self._line("    mov eax, edx")
+        self._line("    pop edx")
+        self._line("    pop ecx")
         self._line("    mov esp, ebp")
         self._line("    pop ebp")
         self._line("    ret")
