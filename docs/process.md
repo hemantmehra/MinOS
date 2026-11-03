@@ -112,10 +112,18 @@ failure and remains available.
 | `19` | Read file | Handle in `EBX`, integer buffer in `ECX`, capacity up to 256 in `EDX`; returns bytes, `0` at end, or `-1` |
 | `20` | Close file | Handle in `EBX` |
 | `21` | Read pipeline input | Writable integer buffer in `ECX`, capacity up to 256 in `EDX`; returns bytes, `0` while empty, or `-1` at end of input |
+| `22` | Write file | Handle in `EBX`, integer buffer in `ECX`, byte count up to 256 in `EDX`; returns bytes written or `-1` |
+| `23` | Truncate file | Handle in `EBX`; resets size and stream position to zero or returns `-1` |
 
 File paths may be absolute or relative to the shared current directory. Reads
 return byte values in a validated integer buffer. Open files are closed
 automatically when the owning process exits.
+
+An ext2 data disk is attached as the secondary IDE drive. Absolute paths under
+`/data` resolve from its root; the primary system disk remains unchanged.
+Writes and truncation are restricted to this secondary disk. Files must already
+exist and have allocated data blocks; writes cannot grow beyond allocated
+capacity.
 
 The shell accepts a single pipeline (`program [args] | program [args]`). The
 producer's printed output becomes the consumer's input; `read_pipe(buffer)` in

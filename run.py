@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 IMAGE = ROOT / "build" / "helloos.img"
+DATA_IMAGE = ROOT / "build" / "data.img"
 
 
 def find_qemu():
@@ -27,6 +28,10 @@ def find_qemu():
 def main():
     if not IMAGE.is_file():
         raise RuntimeError("Disk image not found. Run python .\\build.py first.")
+    if not DATA_IMAGE.is_file():
+        raise RuntimeError(
+            "Secondary data disk not found. Run python .\\build.py first."
+        )
 
     qemu = find_qemu()
     if qemu is None:
@@ -43,6 +48,8 @@ def main():
             "16M",
             "-drive",
             f"file={IMAGE},format=raw,if=ide",
+            "-drive",
+            f"file={DATA_IMAGE},format=raw,if=ide,index=1",
             "-boot",
             "order=c",
             "-no-reboot",

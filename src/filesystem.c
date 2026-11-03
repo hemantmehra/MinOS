@@ -1,8 +1,9 @@
 #include <intrin.h>
 #include "kernel.h"
 
-#define FILESYSTEM_START_SECTOR 193
+#define FILESYSTEM_START_SECTOR 225
 #define DISK_SECTOR_COUNT 32768
+#define DATA_DISK_SECTOR_COUNT 16384
 #define SECTOR_SIZE 512
 #define EXT2_BLOCK_SIZE 1024
 #define EXT2_SUPERBLOCK_SECTOR (FILESYSTEM_START_SECTOR + 2)
@@ -37,6 +38,9 @@
 
 typedef struct
 {
+    unsigned int drive;
+    unsigned int start_sector;
+    unsigned int sector_count;
     unsigned int inode_count;
     unsigned int block_count;
     unsigned int first_data_block;
@@ -147,17 +151,26 @@ static int ata_wait_not_busy(unsigned char *last_status)
     return 0;
 }
 
-static int ata_read_sector(unsigned int lba, unsigned char *sector)
+static int ata_read_sector(
+    unsigned int drive,
+    unsigned int lba,
+    unsigned char *sector)
 {
     unsigned int index;
     unsigned char status;
+    unsigned int sector_count = drive == 0
+        ? DISK_SECTOR_COUNT
+        : DATA_DISK_SECTOR_COUNT;
 
-    if (lba >= DISK_SECTOR_COUNT || !ata_wait_not_busy(&status))
+    if (drive > 1 || lba >= sector_count ||
+        !ata_wait_not_busy(&status))
     {
         return 0;
     }
 
-    __outbyte(ATA_DRIVE_PORT, (unsigned char)(0xE0 | ((lba >> 24) & 0x0F)));
+    __outbyte(
+        ATA_DRIVE_PORT,
+        (unsigned char)(0xE0 | (drive << 4) | ((lba >> 24) & 0x0F)));
     ata_delay_400ns();
     __outbyte(ATA_SECTOR_COUNT_PORT, 1);
     __outbyte(ATA_LBA_LOW_PORT, (unsigned char)lba);
@@ -196,17 +209,26 @@ static int ata_read_sector(unsigned int lba, unsigned char *sector)
     return status != 0 && status != 0xFF && (status & 0x21) == 0;
 }
 
-static int ata_write_sector(unsigned int lba, const unsigned char *sector)
+static int ata_write_sector(
+    unsigned int drive,
+    unsigned int lba,
+    const unsigned char *sector)
 {
     unsigned int index;
     unsigned char status;
+    unsigned int sector_count = drive == 0
+        ? DISK_SECTOR_COUNT
+        : DATA_DISK_SECTOR_COUNT;
 
-    if (lba >= DISK_SECTOR_COUNT || !ata_wait_not_busy(&status))
+    if (drive > 1 || lba >= sector_count ||
+        !ata_wait_not_busy(&status))
     {
         return 0;
     }
 
-    __outbyte(ATA_DRIVE_PORT, (unsigned char)(0xE0 | ((lba >> 24) & 0x0F)));
+    __outbyte(
+        ATA_DRIVE_PORT,
+        (unsigned char)(0xE0 | (drive << 4) | ((lba >> 24) & 0x0F)));
     ata_delay_400ns();
     __outbyte(ATA_SECTOR_COUNT_PORT, 1);
     __outbyte(ATA_LBA_LOW_PORT, (unsigned char)lba);
@@ -299,10 +321,11 @@ static int ext2_read_block(
         return 0;
     }
 
-    first_sector =
-        FILESYSTEM_START_SECTOR + block_number * (EXT2_BLOCK_SIZE / SECTOR_SIZE);
-    return ata_read_sector(first_sector, block) &&
-        ata_read_sector(first_sector + 1, block + SECTOR_SIZE);
+    first_sector = filesystem->start_sector +
+        block_number * (EXT2_BLOCK_SIZE / SECTOR_SIZE);
+    return ata_read_sector(filesystem->drive, first_sector, block) &&
+        ata_read_sector(
+            filesystem->drive, first_sector + 1, block + SECTOR_SIZE);
 }
 
 static int ext2_write_block(
@@ -317,13 +340,16 @@ static int ext2_write_block(
         return 0;
     }
 
-    first_sector =
-        FILESYSTEM_START_SECTOR + block_number * (EXT2_BLOCK_SIZE / SECTOR_SIZE);
-    return ata_write_sector(first_sector, block) &&
-        ata_write_sector(first_sector + 1, block + SECTOR_SIZE);
+    first_sector = filesystem->start_sector +
+        block_number * (EXT2_BLOCK_SIZE / SECTOR_SIZE);
+    return ata_write_sector(filesystem->drive, first_sector, block) &&
+        ata_write_sector(
+            filesystem->drive, first_sector + 1, block + SECTOR_SIZE);
 }
 
-static enum FileSystemError filesystem_mount(Ext2FileSystem *filesystem)
+static enum FileSystemError filesystem_mount_drive(
+    Ext2FileSystem *filesystem,
+    unsigned int drive)
 {
     unsigned char sector[SECTOR_SIZE];
     unsigned int revision;
@@ -335,7 +361,17 @@ static enum FileSystemError filesystem_mount(Ext2FileSystem *filesystem)
     unsigned int incompat_features;
     unsigned int ro_compat_features;
 
-    if (!ata_read_sector(EXT2_SUPERBLOCK_SECTOR, sector))
+    if (drive > 1)
+    {
+        return FILESYSTEM_INVALID_SUPERBLOCK;
+    }
+
+    filesystem->drive = drive;
+    filesystem->start_sector = drive == 0 ? FILESYSTEM_START_SECTOR : 0;
+    filesystem->sector_count =
+        drive == 0 ? DISK_SECTOR_COUNT : DATA_DISK_SECTOR_COUNT;
+    if (!ata_read_sector(
+        filesystem->drive, filesystem->start_sector + 2, sector))
     {
         return FILESYSTEM_DISK_READ_ERROR;
     }
@@ -381,7 +417,7 @@ static enum FileSystemError filesystem_mount(Ext2FileSystem *filesystem)
     }
 
     maximum_blocks =
-        (DISK_SECTOR_COUNT - FILESYSTEM_START_SECTOR) /
+        (filesystem->sector_count - filesystem->start_sector) /
         (EXT2_BLOCK_SIZE / SECTOR_SIZE);
     if (filesystem->block_count > maximum_blocks)
     {
@@ -405,6 +441,11 @@ static enum FileSystemError filesystem_mount(Ext2FileSystem *filesystem)
     filesystem->feature_incompat = incompat_features;
     filesystem->feature_ro_compat = ro_compat_features;
     return FILESYSTEM_OK;
+}
+
+static enum FileSystemError filesystem_mount(Ext2FileSystem *filesystem)
+{
+    return filesystem_mount_drive(filesystem, 0);
 }
 
 static int ext2_read_group_descriptor(
@@ -1196,6 +1237,41 @@ static int ext2_normalize_directory_path(
     return 1;
 }
 
+static int filesystem_prepare_path(
+    const char *path,
+    char normalized[FILESYSTEM_PATH_MAX + 1],
+    unsigned int *drive)
+{
+    unsigned int index;
+
+    if (path == 0)
+    {
+        return 0;
+    }
+
+    if (path[0] == '/' && path[1] == 'd' && path[2] == 'a' &&
+        path[3] == 't' && path[4] == 'a' &&
+        (path[5] == '\0' || path[5] == '/'))
+    {
+        *drive = 1;
+        if (path[5] == '\0')
+        {
+            return ext2_normalize_directory_path("/", normalized);
+        }
+        return ext2_normalize_directory_path(path + 5, normalized);
+    }
+
+    *drive = 0;
+    for (index = 0; path[index] != '\0'; ++index)
+    {
+        if (index == FILESYSTEM_PATH_MAX)
+        {
+            return 0;
+        }
+    }
+    return ext2_normalize_directory_path(path, normalized);
+}
+
 static void ext2_copy_inode(
     Ext2Inode *destination,
     const Ext2Inode *source)
@@ -1450,11 +1526,12 @@ static int ext2_make_executable_name(
 int filesystem_open_directory(unsigned int owner, const char *path)
 {
     unsigned int index;
+    unsigned int drive;
     enum FileSystemError mount_result;
     Ext2DirectoryStream *stream = 0;
     char normalized_path[FILESYSTEM_PATH_MAX + 1];
 
-    if (!ext2_normalize_directory_path(path, normalized_path))
+    if (!filesystem_prepare_path(path, normalized_path, &drive))
     {
         return -1;
     }
@@ -1472,7 +1549,7 @@ int filesystem_open_directory(unsigned int owner, const char *path)
         return -1;
     }
 
-    mount_result = filesystem_mount(&stream->filesystem);
+    mount_result = filesystem_mount_drive(&stream->filesystem, drive);
     if (mount_result != FILESYSTEM_OK ||
         !ext2_lookup_directory_path(
             &stream->filesystem, normalized_path, &stream->inode))
@@ -1620,11 +1697,12 @@ void filesystem_close_process_directories(unsigned int owner)
 int filesystem_open_file(unsigned int owner, const char *path)
 {
     unsigned int index;
+    unsigned int drive;
     enum FileSystemError mount_result;
     Ext2FileStream *stream = 0;
     char normalized_path[FILESYSTEM_PATH_MAX + 1];
 
-    if (!ext2_normalize_directory_path(path, normalized_path))
+    if (!filesystem_prepare_path(path, normalized_path, &drive))
     {
         return -1;
     }
@@ -1642,7 +1720,7 @@ int filesystem_open_file(unsigned int owner, const char *path)
         return -1;
     }
 
-    mount_result = filesystem_mount(&stream->filesystem);
+    mount_result = filesystem_mount_drive(&stream->filesystem, drive);
     if (mount_result != FILESYSTEM_OK ||
         !ext2_lookup_file_path(
             &stream->filesystem, normalized_path, &stream->inode) ||
@@ -1655,6 +1733,120 @@ int filesystem_open_file(unsigned int owner, const char *path)
     stream->position = 0;
     stream->active = 1;
     return (int)(index + 1);
+}
+
+int filesystem_write_file(
+    unsigned int owner,
+    unsigned int handle,
+    const unsigned int *buffer,
+    unsigned int length)
+{
+    Ext2FileStream *stream;
+    unsigned int bytes_written = 0;
+    unsigned int position;
+    unsigned int new_size;
+
+    if (handle == 0 || handle > EXT2_FILE_STREAM_LIMIT ||
+        (buffer == 0 && length != 0) || length > 256)
+    {
+        return -1;
+    }
+    stream = &file_streams[handle - 1];
+    if (!stream->active || stream->owner != owner ||
+        stream->filesystem.drive != 1)
+    {
+        return -1;
+    }
+    if (length == 0)
+    {
+        return 0;
+    }
+    if (stream->position > 0xFFFFFFFF - length)
+    {
+        return -1;
+    }
+
+    position = stream->position;
+    while (bytes_written < length)
+    {
+        unsigned char block[EXT2_BLOCK_SIZE];
+        unsigned int logical_block = position / EXT2_BLOCK_SIZE;
+        unsigned int block_offset = position % EXT2_BLOCK_SIZE;
+        unsigned int chunk_size = EXT2_BLOCK_SIZE - block_offset;
+        unsigned int physical_block;
+        unsigned int index;
+
+        if (chunk_size > length - bytes_written)
+        {
+            chunk_size = length - bytes_written;
+        }
+        if (!ext2_get_inode_block(
+                &stream->filesystem, &stream->inode, logical_block,
+                &physical_block) ||
+            physical_block == 0 ||
+            !ext2_read_block(
+                &stream->filesystem, physical_block, block))
+        {
+            break;
+        }
+        for (index = 0; index < chunk_size; ++index)
+        {
+            block[block_offset + index] =
+                (unsigned char)buffer[bytes_written + index];
+        }
+        if (!ext2_write_block(
+                &stream->filesystem, physical_block, block))
+        {
+            break;
+        }
+        bytes_written += chunk_size;
+        position += chunk_size;
+    }
+
+    if (bytes_written == 0)
+    {
+        return -1;
+    }
+    stream->position = position;
+    new_size = position > stream->inode.size
+        ? position
+        : stream->inode.size;
+    if (new_size != stream->inode.size)
+    {
+        stream->inode.size = new_size;
+        if (!ext2_write_inode(&stream->filesystem, &stream->inode))
+        {
+            return -1;
+        }
+    }
+    return (int)bytes_written;
+}
+
+int filesystem_truncate_file(unsigned int owner, unsigned int handle)
+{
+    Ext2FileStream *stream;
+    unsigned int previous_size;
+
+    if (handle == 0 || handle > EXT2_FILE_STREAM_LIMIT)
+    {
+        return -1;
+    }
+    stream = &file_streams[handle - 1];
+    if (!stream->active || stream->owner != owner ||
+        stream->filesystem.drive != 1)
+    {
+        return -1;
+    }
+
+    previous_size = stream->inode.size;
+    stream->inode.size = 0;
+    if (!ext2_write_inode(&stream->filesystem, &stream->inode))
+    {
+        stream->inode.size = previous_size;
+        return -1;
+    }
+    stream->position = 0;
+    return 0;
 }
 
 int filesystem_read_file(

@@ -57,7 +57,9 @@ enum ProcessService
     PROCESS_SERVICE_OPEN_FILE,
     PROCESS_SERVICE_READ_FILE,
     PROCESS_SERVICE_CLOSE_FILE,
-    PROCESS_SERVICE_READ_PIPE
+    PROCESS_SERVICE_READ_PIPE,
+    PROCESS_SERVICE_WRITE_FILE,
+    PROCESS_SERVICE_TRUNCATE_FILE
 };
 
 void terminal_write_character(char character);
@@ -135,6 +137,12 @@ int filesystem_read_file(
     unsigned int handle,
     unsigned int *buffer,
     unsigned int capacity);
+int filesystem_write_file(
+    unsigned int owner,
+    unsigned int handle,
+    const unsigned int *buffer,
+    unsigned int length);
+int filesystem_truncate_file(unsigned int owner, unsigned int handle);
 int filesystem_close_file(unsigned int owner, unsigned int handle);
 void filesystem_close_process_files(unsigned int owner);
 int filesystem_change_directory(const char *path);

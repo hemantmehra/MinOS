@@ -1,0 +1,2 @@
+The secondary disk is formatted as ext2.
+This sample file can be read with CAT /data/SAMPLE.TXT.

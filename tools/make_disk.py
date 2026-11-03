@@ -7,7 +7,7 @@ from pathlib import Path
 DISK_IMAGE_SIZE = 16 * 1024 * 1024
 KERNEL_BASE = 0x10000
 SECTOR_SIZE = 512
-KERNEL_SECTOR_COUNT = 192
+KERNEL_SECTOR_COUNT = 224
 ENTRY_PLACEHOLDER = 0xC0DEF00D
 FILESYSTEM_START_SECTOR = KERNEL_SECTOR_COUNT + 1
 EXT2_BLOCK_SIZE = 1024
@@ -50,7 +50,7 @@ class File:
 
 
 def source_entries(directory):
-    excluded_directories = {".git", "build", "__pycache__"}
+    excluded_directories = {".git", "build", "__pycache__", "data_files"}
     entries = []
     for child in sorted(
         directory.iterdir(),

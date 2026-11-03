@@ -989,6 +989,40 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         saved_stack[11] = (unsigned int)filesystem_close_file(
             process->process_id, saved_stack[8]);
     }
+    else if (syscall_number == PROCESS_SERVICE_WRITE_FILE)
+    {
+        unsigned int length = saved_stack[9];
+        unsigned int buffer_size;
+
+        if (length > 256 ||
+            length > 0xFFFFFFFF / sizeof(unsigned int))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            buffer_size = length * sizeof(unsigned int);
+            if (buffer_size != 0 &&
+                !process_stack_buffer_is_valid(
+                    process, saved_stack[10], buffer_size))
+            {
+                saved_stack[11] = (unsigned int)-1;
+            }
+            else
+            {
+                saved_stack[11] = (unsigned int)filesystem_write_file(
+                    process->process_id,
+                    saved_stack[8],
+                    (const unsigned int *)saved_stack[10],
+                    length);
+            }
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_TRUNCATE_FILE)
+    {
+        saved_stack[11] = (unsigned int)filesystem_truncate_file(
+            process->process_id, saved_stack[8]);
+    }
     else if (syscall_number == PROCESS_SERVICE_READ_PIPE)
     {
         unsigned int capacity = saved_stack[9];

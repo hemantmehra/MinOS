@@ -37,6 +37,8 @@ BUILTINS = {
     "read_arguments": (1, "expression"),
     "read_dir": (2, "expression"),
     "read_file": (2, "expression"),
+    "write_file": (3, "expression"),
+    "truncate_file": (1, "expression"),
     "read_pipe": (1, "expression"),
     "random": (1, "expression"),
     "read_number": (2, "expression"),
@@ -69,6 +71,8 @@ PROCESS_SERVICES = {
     "read_file": 19,
     "close_file": 20,
     "read_pipe": 21,
+    "write_file": 22,
+    "truncate_file": 23,
 }
 
 PRECEDENCE = {
@@ -863,6 +867,43 @@ class CodeGenerator:
                 f"    lea ecx, [ebp{self.array_offsets[buffer_name]:+d}]"
             )
             self._line("    mov edx, 256")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
+            self._line("    int 0x80")
+        elif name == "write_file":
+            self._check_arity(expression, 3)
+            self._check_integer_arguments(expression)
+            buffer_expression = arguments[1]
+            if buffer_expression["kind"] != "variable":
+                self._error_from_expression(
+                    buffer_expression,
+                    "write_file expects a local array buffer",
+                )
+            buffer_name = buffer_expression["name"]
+            buffer_size = self.array_sizes.get(buffer_name)
+            if buffer_size is None:
+                self._error_from_expression(
+                    buffer_expression,
+                    f"unknown array {buffer_name!r}",
+                )
+            if buffer_size < 256:
+                self._error_from_expression(
+                    buffer_expression,
+                    "write_file buffer must contain at least 256 elements",
+                )
+            self._generate_expression(arguments[0])
+            self._line("    mov ebx, eax")
+            self._line(
+                f"    lea ecx, [ebp{self.array_offsets[buffer_name]:+d}]"
+            )
+            self._generate_expression(arguments[2])
+            self._line("    mov edx, eax")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
+            self._line("    int 0x80")
+        elif name == "truncate_file":
+            self._check_arity(expression, 1)
+            self._check_integer_arguments(expression)
+            self._generate_expression(arguments[0])
+            self._line("    mov ebx, eax")
             self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
         elif name in BUILTINS:

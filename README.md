@@ -28,8 +28,10 @@ python run.py
 
 QEMU opens the kernel with a BIOS-backed PC. The kernel uses a 1280x720 VBE
 framebuffer with a 16-color palette, rendering the shell with bitmap
-characters and a blue `minios>` prompt. The disk image contains an ext2 filesystem populated with project files and
-directories. The kernel supports listing and root-level directory creation.
+characters and a blue `minios>` prompt. The system disk contains an ext2
+filesystem populated with project files and directories. A separate 8 MiB
+ext2 data disk is attached as the secondary IDE drive; its contents persist
+across normal builds and are available under `/data`.
 
 All operating-system source code is under `src\`. Kernel code is organized by
 subsystem: `src\kernel.c` handles shell dispatch, `src\video.c` renders the
@@ -110,6 +112,13 @@ Supported shell commands:
 - `cd <path>` runs `CD.EXE` to change the current directory. Paths may be
   absolute or relative and support `.` and `..`.
 - `cat <file>` runs `CAT.EXE` to display a file using file stream services.
+- `/data/<file>` addresses files on the secondary ext2 disk. For example,
+  `cat /data/SAMPLE.TXT` reads a test file and
+  `write /data/WRITE.TXT <text>` replaces the writable test file's contents.
+  Writes are limited to the file's preallocated ext2 capacity.
+- `python tools\read_disk.py` lists the root of `build\data.img`, or
+  `python tools\read_disk.py build\data.img /SAMPLE.TXT` reads a file after
+  MinOS is shut down. The script can inspect any supported ext2 image.
 - `wc` runs `WC.EXE` to count whitespace-separated words from pipeline input.
 - `program [args] | program [args]` pipes one program's printed output to the
   next program's standard input. For example, `ls | wc` counts visible
@@ -125,7 +134,10 @@ Supported shell commands:
   `RUN`, `LIST`, `NEW`, `EXIT`, `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`,
   `END`, `STOP`, and integer expressions.
 
-The build writes its intermediate files and disk image to `build\`. MSVC
+The build writes its intermediate files and system disk image to `build\`.
+`python tools\make_data_disk.py` explicitly recreates the secondary ext2 disk
+from `tools\data_files\`; this resets its contents. MSVC
 links the kernel at a fixed 32-bit address; keep the loaded code small and
 freestanding, without Windows APIs or C runtime dependencies.
-Rebuilding recreates the disk image and resets runtime-created directories.
+Rebuilding recreates the system disk and resets runtime-created directories,
+but preserves an existing secondary data disk.

@@ -175,6 +175,20 @@ def main():
     if result.returncode != 0:
         raise RuntimeError("Failed to build the bootable disk image.")
 
+    data_disk = BUILD_DIRECTORY / "data.img"
+    if not data_disk.exists():
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "make_data_disk.py"),
+                "--output",
+                str(data_disk),
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Failed to create the ext2 secondary disk.")
+
     print(f"Built {BUILD_DIRECTORY / 'helloos.img'}")
 
 

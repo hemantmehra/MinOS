@@ -128,7 +128,8 @@ static void run_command(char *command)
         !command_token_equals(command, name_end, "mkdir") &&
         !command_token_equals(command, name_end, "ls") &&
         !command_token_equals(command, name_end, "cd") &&
-        !command_token_equals(command, name_end, "cat"))
+        !command_token_equals(command, name_end, "cat") &&
+        !command_token_equals(command, name_end, "write"))
     {
         terminal_write("Unknown command or executable arguments: ");
         terminal_write(command);

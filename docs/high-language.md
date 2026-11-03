@@ -95,7 +95,12 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   buffer)` reads up to 256 bytes into a local integer array of at least 256
   elements, returning the byte count, `0` at end of file, or `-1` on error.
   `close_file(handle);` closes the file. Open files are also closed when the
-  owning process exits.
+  owning process exits. Paths under `/data` refer to the secondary ext2 disk.
+- `write_file(handle, buffer, length)` writes up to 256 bytes from an integer
+  array to an open file and returns the byte count or `-1`. Writes are supported
+  only for `/data` files and cannot exceed their preallocated ext2 blocks.
+  `truncate_file(handle)` resets a secondary-disk file's size and stream
+  position to zero while retaining its allocated blocks.
 - `read_pipe(buffer)` reads up to 256 bytes from a process's standard input into
   a local integer array of at least 256 elements. It returns the byte count,
   `0` while the pipe is temporarily empty, or `-1` when the writer has closed.
