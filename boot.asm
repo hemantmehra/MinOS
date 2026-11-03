@@ -1,7 +1,8 @@
 BITS 16
 ORG 0x7C00
 
-%define KERNEL_SECTOR_COUNT 128
+%define KERNEL_SECTOR_COUNT 136
+%define KERNEL_FIRST_READ_SECTOR_COUNT 127
 %define CODE_SELECTOR 0x08
 %define DATA_SELECTOR 0x10
 
@@ -15,6 +16,16 @@ start:
     sti
     mov [boot_drive], dl
 
+    mov si, disk_address_packet
+    mov dl, [boot_drive]
+    mov ah, 0x42
+    int 0x13
+    jc disk_read_error
+
+    mov word [disk_address_packet + 2], KERNEL_SECTOR_COUNT - KERNEL_FIRST_READ_SECTOR_COUNT
+    mov word [disk_address_packet + 6], 0x1FE0
+    mov dword [disk_address_packet + 8], KERNEL_FIRST_READ_SECTOR_COUNT + 1
+    mov dword [disk_address_packet + 12], 0
     mov si, disk_address_packet
     mov dl, [boot_drive]
     mov ah, 0x42
@@ -70,7 +81,7 @@ boot_drive:
 align 4
 disk_address_packet:
     db 0x10, 0
-    dw KERNEL_SECTOR_COUNT
+    dw KERNEL_FIRST_READ_SECTOR_COUNT
     dw 0
     dw 0x1000
     dq 1
