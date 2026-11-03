@@ -4,8 +4,20 @@
 #define FILESYSTEM_START_SECTOR 129
 #define DISK_SECTOR_COUNT 32768
 #define SECTOR_SIZE 512
+#define EXT2_BLOCK_SIZE 1024
+#define EXT2_SUPERBLOCK_SECTOR (FILESYSTEM_START_SECTOR + 2)
+#define EXT2_SUPERBLOCK_MAGIC 0xEF53
+#define EXT2_ROOT_INODE 2
+#define EXT2_FEATURE_INCOMPAT_FILETYPE 0x0002
+#define EXT2_FEATURE_COMPAT_SUPPORTED 0
+#define EXT2_FEATURE_INCOMPAT_SUPPORTED EXT2_FEATURE_INCOMPAT_FILETYPE
+#define EXT2_FEATURE_RO_COMPAT_SUPPORTED 0x0003
+#define EXT2_S_IFMT 0xF000
+#define EXT2_S_IFDIR 0x4000
+#define EXT2_S_IFREG 0x8000
+#define EXT2_NAME_MAX 255
+#define EXT2_POINTERS_PER_BLOCK (EXT2_BLOCK_SIZE / 4)
 #define ATA_DATA_PORT 0x1F0
-#define ATA_ERROR_PORT 0x1F1
 #define ATA_SECTOR_COUNT_PORT 0x1F2
 #define ATA_LBA_LOW_PORT 0x1F3
 #define ATA_LBA_MID_PORT 0x1F4
@@ -15,30 +27,51 @@
 #define ATA_COMMAND_PORT 0x1F7
 #define ATA_ALT_STATUS_PORT 0x3F6
 #define ATA_READ_SECTORS 0x20
-#define ATA_WRITE_SECTORS 0x30
-#define ATA_FLUSH_CACHE 0xE7
 
 typedef struct
 {
-    unsigned int volume_end_sector;
-    unsigned int fat_start_sector;
-    unsigned int sectors_per_fat;
-    unsigned int data_start_sector;
-    unsigned int root_sector;
-    unsigned int root_sector_count;
-    unsigned int root_entry_count;
-    unsigned int cluster_count;
-    unsigned char fat_count;
-    unsigned char sectors_per_cluster;
-} FileSystem;
+    unsigned int inode_count;
+    unsigned int block_count;
+    unsigned int first_data_block;
+    unsigned int blocks_per_group;
+    unsigned int inodes_per_group;
+    unsigned int group_count;
+    unsigned int feature_incompat;
+    unsigned int feature_ro_compat;
+    unsigned short inode_size;
+} Ext2FileSystem;
+
+typedef struct
+{
+    unsigned int inode;
+    unsigned int size;
+    unsigned int size_high;
+    unsigned char mode[2];
+    unsigned char block_pointers[60];
+} Ext2Inode;
+
+typedef struct
+{
+    unsigned int byte_offset;
+    unsigned int loaded_block;
+    unsigned int block_offset;
+    unsigned char block[EXT2_BLOCK_SIZE];
+} Ext2DirectoryIterator;
+
+typedef struct
+{
+    unsigned int inode;
+    unsigned short name_length;
+    unsigned char file_type;
+    char name[EXT2_NAME_MAX + 1];
+} Ext2DirectoryEntry;
 
 enum FileSystemError
 {
     FILESYSTEM_OK,
     FILESYSTEM_DISK_READ_ERROR,
-    FILESYSTEM_INVALID_BOOT_SECTOR,
-    FILESYSTEM_INVALID_BPB,
-    FILESYSTEM_NOT_FAT16
+    FILESYSTEM_INVALID_SUPERBLOCK,
+    FILESYSTEM_UNSUPPORTED_FEATURE
 };
 
 static void ata_delay_400ns(void)
@@ -128,61 +161,6 @@ static int ata_read_sector(unsigned int lba, unsigned char *sector)
     return status != 0 && status != 0xFF && (status & 0x21) == 0;
 }
 
-static int ata_write_sector(unsigned int lba, const unsigned char *sector)
-{
-    unsigned int index;
-    unsigned char status;
-
-    if (lba >= DISK_SECTOR_COUNT || !ata_wait_not_busy(&status))
-    {
-        return 0;
-    }
-
-    __outbyte(ATA_DRIVE_PORT, (unsigned char)(0xE0 | ((lba >> 24) & 0x0F)));
-    ata_delay_400ns();
-    __outbyte(ATA_SECTOR_COUNT_PORT, 1);
-    __outbyte(ATA_LBA_LOW_PORT, (unsigned char)lba);
-    __outbyte(ATA_LBA_MID_PORT, (unsigned char)(lba >> 8));
-    __outbyte(ATA_LBA_HIGH_PORT, (unsigned char)(lba >> 16));
-    __outbyte(ATA_COMMAND_PORT, ATA_WRITE_SECTORS);
-
-    for (index = 0; index < 1000000; ++index)
-    {
-        status = __inbyte(ATA_STATUS_PORT);
-        if (status == 0 || status == 0xFF ||
-            (status & 0x21) != 0)
-        {
-            return 0;
-        }
-        if ((status & 0x88) == 0x08)
-        {
-            break;
-        }
-    }
-
-    if (index == 1000000)
-    {
-        return 0;
-    }
-
-    for (index = 0; index < SECTOR_SIZE; index += 2)
-    {
-        unsigned short word = (unsigned short)(
-            sector[index] | ((unsigned short)sector[index + 1] << 8));
-        __outword(ATA_DATA_PORT, word);
-    }
-
-    ata_delay_400ns();
-    if (!ata_wait_not_busy(&status))
-    {
-        return 0;
-    }
-
-    __outbyte(ATA_COMMAND_PORT, ATA_FLUSH_CACHE);
-    ata_delay_400ns();
-    return ata_wait_not_busy(&status);
-}
-
 static unsigned short read_little_endian_word(const unsigned char *data)
 {
     return (unsigned short)(data[0] | ((unsigned short)data[1] << 8));
@@ -196,331 +174,573 @@ static unsigned int read_little_endian_dword(const unsigned char *data)
         ((unsigned int)data[3] << 24);
 }
 
-static enum FileSystemError filesystem_mount(
-    FileSystem *filesystem,
-    unsigned char *sector)
+static int ext2_read_block(
+    const Ext2FileSystem *filesystem,
+    unsigned int block_number,
+    unsigned char block[EXT2_BLOCK_SIZE])
 {
-    unsigned int total_sectors;
-    unsigned int reserved_sectors;
-    unsigned int fat_count;
-    unsigned int sectors_per_fat;
-    unsigned int root_sectors;
-    unsigned int first_root_sector;
-    unsigned int first_data_sector;
-    unsigned int cluster_count;
-    unsigned int volume_end;
-    unsigned short bytes_per_sector;
-    unsigned short root_entries;
-    unsigned char sectors_per_cluster;
+    unsigned int first_sector;
 
-    if (!ata_read_sector(FILESYSTEM_START_SECTOR, sector))
-    {
-        return FILESYSTEM_DISK_READ_ERROR;
-    }
-
-    if (sector[510] != 0x55 || sector[511] != 0xAA)
-    {
-        return FILESYSTEM_INVALID_BOOT_SECTOR;
-    }
-
-    bytes_per_sector = read_little_endian_word(&sector[11]);
-    sectors_per_cluster = sector[13];
-    reserved_sectors = read_little_endian_word(&sector[14]);
-    fat_count = sector[16];
-    root_entries = read_little_endian_word(&sector[17]);
-    total_sectors = read_little_endian_word(&sector[19]);
-    if (total_sectors == 0)
-    {
-        total_sectors = read_little_endian_dword(&sector[32]);
-    }
-    sectors_per_fat = read_little_endian_word(&sector[22]);
-
-    if (bytes_per_sector != SECTOR_SIZE ||
-        sectors_per_cluster == 0 ||
-        (sectors_per_cluster & (sectors_per_cluster - 1)) != 0 ||
-        reserved_sectors == 0 || fat_count == 0 || fat_count > 2 ||
-        root_entries == 0 || total_sectors == 0 || sectors_per_fat == 0)
-    {
-        return FILESYSTEM_INVALID_BPB;
-    }
-
-    root_sectors =
-        ((unsigned int)root_entries * 32 + SECTOR_SIZE - 1) / SECTOR_SIZE;
-    first_root_sector =
-        FILESYSTEM_START_SECTOR + reserved_sectors + fat_count * sectors_per_fat;
-    first_data_sector = first_root_sector + root_sectors;
-    volume_end = FILESYSTEM_START_SECTOR + total_sectors;
-    if (first_data_sector >= volume_end || volume_end > DISK_SECTOR_COUNT)
-    {
-        return FILESYSTEM_INVALID_BPB;
-    }
-
-    cluster_count =
-        (volume_end - first_data_sector) / sectors_per_cluster;
-    if (cluster_count < 4085 || cluster_count >= 65525)
-    {
-        return FILESYSTEM_NOT_FAT16;
-    }
-
-    if ((cluster_count + 2) * 2 > sectors_per_fat * SECTOR_SIZE)
-    {
-        return FILESYSTEM_INVALID_BPB;
-    }
-
-    filesystem->root_sector = first_root_sector;
-    filesystem->root_sector_count = root_sectors;
-    filesystem->root_entry_count = root_entries;
-    filesystem->volume_end_sector = volume_end;
-    filesystem->fat_start_sector = FILESYSTEM_START_SECTOR + reserved_sectors;
-    filesystem->sectors_per_fat = sectors_per_fat;
-    filesystem->data_start_sector = first_data_sector;
-    filesystem->cluster_count = cluster_count;
-    filesystem->fat_count = (unsigned char)fat_count;
-    filesystem->sectors_per_cluster = sectors_per_cluster;
-    return FILESYSTEM_OK;
-}
-
-static void terminal_write_fat_name(const unsigned char *entry)
-{
-    unsigned int base_length = 8;
-    unsigned int extension_length = 3;
-    unsigned int index;
-
-    if (entry[0] == 0x05)
-    {
-        terminal_write_character((char)0xE5);
-    }
-    else
-    {
-        while (base_length != 0 && entry[base_length - 1] == ' ')
-        {
-            --base_length;
-        }
-
-        for (index = 0; index < base_length; ++index)
-        {
-            terminal_write_character((char)entry[index]);
-        }
-    }
-
-    while (extension_length != 0 && entry[8 + extension_length - 1] == ' ')
-    {
-        --extension_length;
-    }
-
-    if (extension_length != 0)
-    {
-        terminal_write_character('.');
-        for (index = 0; index < extension_length; ++index)
-        {
-            terminal_write_character((char)entry[8 + index]);
-        }
-    }
-}
-
-void filesystem_list_root(void)
-{
-    FileSystem filesystem;
-    unsigned char sector[SECTOR_SIZE];
-    unsigned int entries_seen = 0;
-    unsigned int sector_index;
-    enum FileSystemError error = filesystem_mount(&filesystem, sector);
-
-    if (error == FILESYSTEM_DISK_READ_ERROR)
-    {
-        terminal_write("ls: could not read the filesystem from disk.\n");
-        return;
-    }
-    if (error == FILESYSTEM_INVALID_BOOT_SECTOR)
-    {
-        terminal_write("ls: filesystem has an invalid boot-sector signature.\n");
-        return;
-    }
-    if (error == FILESYSTEM_NOT_FAT16)
-    {
-        terminal_write("ls: volume does not have a FAT16 cluster count.\n");
-        return;
-    }
-    if (error != FILESYSTEM_OK)
-    {
-        terminal_write("ls: filesystem has an invalid boot record.\n");
-        return;
-    }
-
-    for (sector_index = 0;
-        sector_index < filesystem.root_sector_count;
-        ++sector_index)
-    {
-        unsigned int entry_index;
-
-        if (!ata_read_sector(
-            filesystem.root_sector + sector_index, sector))
-        {
-            terminal_write("ls: could not read the filesystem directory.\n");
-            return;
-        }
-
-        for (entry_index = 0; entry_index < SECTOR_SIZE / 32; ++entry_index)
-        {
-            const unsigned char *entry = &sector[entry_index * 32];
-            unsigned char attributes;
-            unsigned int file_size;
-            unsigned int index;
-
-            if (entry[0] == 0)
-            {
-                if (entries_seen == 0)
-                {
-                    terminal_write("(empty)\n");
-                }
-                return;
-            }
-
-            if (entry[0] == 0xE5)
-            {
-                continue;
-            }
-
-            attributes = entry[11];
-            if (attributes == 0x0F || (attributes & 0x08) != 0 ||
-                entry[0] == '.')
-            {
-                continue;
-            }
-
-            if ((attributes & 0x10) != 0)
-            {
-                terminal_write("[DIR]  ");
-                terminal_write_fat_name(entry);
-                terminal_write("\n");
-            }
-            else
-            {
-                file_size = read_little_endian_dword(&entry[28]);
-                terminal_write_fat_name(entry);
-                for (index = 0; index < 2; ++index)
-                {
-                    terminal_write_character(' ');
-                }
-                terminal_write_unsigned(file_size);
-                terminal_write(" bytes\n");
-            }
-
-            ++entries_seen;
-        }
-    }
-
-    if (entries_seen == 0)
-    {
-        terminal_write("(empty)\n");
-    }
-}
-
-
-static int filesystem_make_short_name(
-    const char *name,
-    unsigned char short_name[11])
-{
-    unsigned int index = 0;
-
-    while (index < 11)
-    {
-        short_name[index] = ' ';
-        ++index;
-    }
-
-    index = 0;
-    while (name[index] != '\0')
-    {
-        char character = name[index];
-
-        if (index == 8 ||
-            !((character >= 'a' && character <= 'z') ||
-                (character >= 'A' && character <= 'Z') ||
-                (character >= '0' && character <= '9') ||
-                character == '_' || character == '-'))
-        {
-            return 0;
-        }
-
-        if (character >= 'a' && character <= 'z')
-        {
-            character = (char)(character - 'a' + 'A');
-        }
-
-        short_name[index] = (unsigned char)character;
-        ++index;
-    }
-
-    return index != 0;
-}
-
-static int filesystem_make_file_name(
-    const char *name,
-    unsigned char short_name[11])
-{
-    unsigned int base_length = 0;
-    unsigned int extension_length = 0;
-    unsigned int index;
-    int in_extension = 0;
-
-    for (index = 0; index < 11; ++index)
-    {
-        short_name[index] = ' ';
-    }
-
-    for (index = 0; name[index] != '\0'; ++index)
-    {
-        char character = name[index];
-        unsigned int *length = in_extension
-            ? &extension_length
-            : &base_length;
-        unsigned int limit = in_extension ? 3 : 8;
-        unsigned int destination = in_extension
-            ? 8 + extension_length
-            : base_length;
-
-        if (character == '.' && !in_extension)
-        {
-            if (base_length == 0)
-            {
-                return 0;
-            }
-            in_extension = 1;
-            continue;
-        }
-
-        if (!((character >= 'a' && character <= 'z') ||
-                (character >= 'A' && character <= 'Z') ||
-                (character >= '0' && character <= '9') ||
-                character == '_' || character == '-'))
-        {
-            return 0;
-        }
-        if (*length >= limit)
-        {
-            return 0;
-        }
-        if (character >= 'a' && character <= 'z')
-        {
-            character = (char)(character - 'a' + 'A');
-        }
-        short_name[destination] = (unsigned char)character;
-        ++*length;
-    }
-
-    if (base_length == 0 || (in_extension && extension_length == 0))
+    if (block_number >= filesystem->block_count)
     {
         return 0;
     }
 
-    if (!in_extension)
+    first_sector =
+        FILESYSTEM_START_SECTOR + block_number * (EXT2_BLOCK_SIZE / SECTOR_SIZE);
+    return ata_read_sector(first_sector, block) &&
+        ata_read_sector(first_sector + 1, block + SECTOR_SIZE);
+}
+
+static enum FileSystemError filesystem_mount(Ext2FileSystem *filesystem)
+{
+    unsigned char sector[SECTOR_SIZE];
+    unsigned int revision;
+    unsigned int block_size_log;
+    unsigned int blocks_available;
+    unsigned int inode_groups;
+    unsigned int maximum_blocks;
+    unsigned int compat_features;
+    unsigned int incompat_features;
+    unsigned int ro_compat_features;
+
+    if (!ata_read_sector(EXT2_SUPERBLOCK_SECTOR, sector))
     {
-        short_name[8] = 'E';
-        short_name[9] = 'X';
-        short_name[10] = 'E';
+        return FILESYSTEM_DISK_READ_ERROR;
+    }
+
+    if (read_little_endian_word(&sector[56]) != EXT2_SUPERBLOCK_MAGIC)
+    {
+        return FILESYSTEM_INVALID_SUPERBLOCK;
+    }
+
+    filesystem->inode_count = read_little_endian_dword(&sector[0]);
+    filesystem->block_count = read_little_endian_dword(&sector[4]);
+    filesystem->first_data_block = read_little_endian_dword(&sector[20]);
+    block_size_log = read_little_endian_dword(&sector[24]);
+    filesystem->blocks_per_group = read_little_endian_dword(&sector[32]);
+    filesystem->inodes_per_group = read_little_endian_dword(&sector[40]);
+    revision = read_little_endian_dword(&sector[76]);
+    filesystem->inode_size = revision == 0
+        ? 128
+        : read_little_endian_word(&sector[88]);
+    compat_features = read_little_endian_dword(&sector[92]);
+    incompat_features = read_little_endian_dword(&sector[96]);
+    ro_compat_features = read_little_endian_dword(&sector[100]);
+
+    if (revision > 1 || block_size_log != 0 ||
+        filesystem->first_data_block != 1 ||
+        filesystem->inode_count < EXT2_ROOT_INODE ||
+        filesystem->block_count <= filesystem->first_data_block ||
+        filesystem->blocks_per_group == 0 ||
+        filesystem->blocks_per_group > EXT2_BLOCK_SIZE * 8 ||
+        filesystem->inodes_per_group == 0 ||
+        filesystem->inodes_per_group > EXT2_BLOCK_SIZE * 8 ||
+        (filesystem->inode_size != 128 && filesystem->inode_size != 256) ||
+        (filesystem->inode_size & 3) != 0)
+    {
+        return FILESYSTEM_INVALID_SUPERBLOCK;
+    }
+
+    if ((compat_features & ~EXT2_FEATURE_COMPAT_SUPPORTED) != 0 ||
+        (incompat_features & ~EXT2_FEATURE_INCOMPAT_SUPPORTED) != 0 ||
+        (ro_compat_features & ~EXT2_FEATURE_RO_COMPAT_SUPPORTED) != 0)
+    {
+        return FILESYSTEM_UNSUPPORTED_FEATURE;
+    }
+
+    maximum_blocks =
+        (DISK_SECTOR_COUNT - FILESYSTEM_START_SECTOR) /
+        (EXT2_BLOCK_SIZE / SECTOR_SIZE);
+    if (filesystem->block_count > maximum_blocks)
+    {
+        return FILESYSTEM_INVALID_SUPERBLOCK;
+    }
+
+    blocks_available =
+        filesystem->block_count - filesystem->first_data_block;
+    filesystem->group_count =
+        (blocks_available + filesystem->blocks_per_group - 1) /
+        filesystem->blocks_per_group;
+    inode_groups =
+        (filesystem->inode_count + filesystem->inodes_per_group - 1) /
+        filesystem->inodes_per_group;
+    if (filesystem->group_count == 0 ||
+        filesystem->group_count != inode_groups)
+    {
+        return FILESYSTEM_INVALID_SUPERBLOCK;
+    }
+
+    filesystem->feature_incompat = incompat_features;
+    filesystem->feature_ro_compat = ro_compat_features;
+    return FILESYSTEM_OK;
+}
+
+static int ext2_read_group_descriptor(
+    const Ext2FileSystem *filesystem,
+    unsigned int group,
+    unsigned char descriptor[32])
+{
+    unsigned char block[EXT2_BLOCK_SIZE];
+    unsigned int descriptor_offset;
+    unsigned int descriptor_block;
+
+    if (group >= filesystem->group_count)
+    {
+        return 0;
+    }
+
+    descriptor_offset = group * 32;
+    descriptor_block =
+        filesystem->first_data_block + 1 +
+        descriptor_offset / EXT2_BLOCK_SIZE;
+    if (!ext2_read_block(filesystem, descriptor_block, block))
+    {
+        return 0;
+    }
+
+    {
+        unsigned int index;
+        unsigned int offset = descriptor_offset % EXT2_BLOCK_SIZE;
+        volatile unsigned char *descriptor_output = descriptor;
+
+        for (index = 0; index < 32; ++index)
+        {
+            descriptor_output[index] = block[offset + index];
+        }
     }
     return 1;
+}
+
+static int ext2_read_inode(
+    const Ext2FileSystem *filesystem,
+    unsigned int inode_number,
+    Ext2Inode *inode)
+{
+    unsigned char descriptor[32];
+    unsigned char block[EXT2_BLOCK_SIZE];
+    unsigned int group;
+    unsigned int index_in_group;
+    unsigned int table_block;
+    unsigned int byte_offset;
+    unsigned int index;
+
+    if (inode_number == 0 || inode_number > filesystem->inode_count)
+    {
+        return 0;
+    }
+
+    group = (inode_number - 1) / filesystem->inodes_per_group;
+    index_in_group = (inode_number - 1) % filesystem->inodes_per_group;
+    if (!ext2_read_group_descriptor(filesystem, group, descriptor))
+    {
+        return 0;
+    }
+
+    table_block = read_little_endian_dword(&descriptor[8]);
+    byte_offset = index_in_group * filesystem->inode_size;
+    table_block += byte_offset / EXT2_BLOCK_SIZE;
+    byte_offset %= EXT2_BLOCK_SIZE;
+    if (!ext2_read_block(filesystem, table_block, block))
+    {
+        return 0;
+    }
+
+    for (index = 0; index < 60; ++index)
+    {
+        ((volatile unsigned char *)inode->block_pointers)[index] =
+            block[byte_offset + 40 + index];
+    }
+    inode->inode = inode_number;
+    inode->mode[0] = block[byte_offset];
+    inode->mode[1] = block[byte_offset + 1];
+    inode->size = read_little_endian_dword(&block[byte_offset + 4]);
+    inode->size_high =
+        read_little_endian_dword(&block[byte_offset + 108]);
+    return 1;
+}
+
+static unsigned int ext2_inode_mode(const Ext2Inode *inode)
+{
+    return read_little_endian_word(inode->mode);
+}
+
+static unsigned int ext2_inode_block_pointer(
+    const Ext2Inode *inode,
+    unsigned int pointer_index)
+{
+    return read_little_endian_dword(
+        &inode->block_pointers[pointer_index * 4]);
+}
+
+static int ext2_read_indirect_pointer(
+    const Ext2FileSystem *filesystem,
+    unsigned int pointer_block,
+    unsigned int index,
+    unsigned int *result)
+{
+    unsigned char block[EXT2_BLOCK_SIZE];
+
+    if (pointer_block == 0 || index >= EXT2_POINTERS_PER_BLOCK ||
+        !ext2_read_block(filesystem, pointer_block, block))
+    {
+        return 0;
+    }
+
+    *result = read_little_endian_dword(&block[index * 4]);
+    return 1;
+}
+
+static int ext2_get_inode_block(
+    const Ext2FileSystem *filesystem,
+    const Ext2Inode *inode,
+    unsigned int logical_block,
+    unsigned int *physical_block)
+{
+    unsigned int indirect_block;
+    unsigned int first_index;
+    unsigned int second_index;
+
+    if (logical_block < 12)
+    {
+        *physical_block =
+            ext2_inode_block_pointer(inode, logical_block);
+        return 1;
+    }
+
+    logical_block -= 12;
+    if (logical_block < EXT2_POINTERS_PER_BLOCK)
+    {
+        indirect_block = ext2_inode_block_pointer(inode, 12);
+        return indirect_block == 0
+            ? (*physical_block = 0, 1)
+            : ext2_read_indirect_pointer(
+                filesystem, indirect_block, logical_block, physical_block);
+    }
+
+    logical_block -= EXT2_POINTERS_PER_BLOCK;
+    if (logical_block >=
+        EXT2_POINTERS_PER_BLOCK * EXT2_POINTERS_PER_BLOCK)
+    {
+        return 0;
+    }
+
+    first_index = logical_block / EXT2_POINTERS_PER_BLOCK;
+    second_index = logical_block % EXT2_POINTERS_PER_BLOCK;
+    indirect_block = ext2_inode_block_pointer(inode, 13);
+    if (indirect_block == 0)
+    {
+        *physical_block = 0;
+        return 1;
+    }
+    if (!ext2_read_indirect_pointer(
+        filesystem, indirect_block, first_index, &indirect_block))
+    {
+        return 0;
+    }
+    if (indirect_block == 0)
+    {
+        *physical_block = 0;
+        return 1;
+    }
+    return ext2_read_indirect_pointer(
+        filesystem, indirect_block, second_index, physical_block);
+}
+
+static int ext2_directory_next(
+    const Ext2FileSystem *filesystem,
+    const Ext2Inode *directory,
+    Ext2DirectoryIterator *iterator,
+    Ext2DirectoryEntry *entry)
+{
+    unsigned int logical_block;
+    unsigned int physical_block;
+    unsigned int record_length;
+    unsigned int name_length;
+    unsigned int index;
+    unsigned char *record;
+
+    if (iterator->byte_offset >= directory->size)
+    {
+        return 0;
+    }
+
+    logical_block = iterator->byte_offset / EXT2_BLOCK_SIZE;
+    iterator->block_offset = iterator->byte_offset % EXT2_BLOCK_SIZE;
+    if (iterator->loaded_block != logical_block)
+    {
+        if (!ext2_get_inode_block(
+            filesystem, directory, logical_block, &physical_block) ||
+            physical_block == 0 ||
+            !ext2_read_block(filesystem, physical_block, iterator->block))
+        {
+            return -1;
+        }
+        iterator->loaded_block = logical_block;
+    }
+
+    record = &iterator->block[iterator->block_offset];
+    record_length = read_little_endian_word(&record[4]);
+    if (record_length < 8 || (record_length & 3) != 0 ||
+        record_length > EXT2_BLOCK_SIZE - iterator->block_offset)
+    {
+        return -1;
+    }
+
+    if ((filesystem->feature_incompat & EXT2_FEATURE_INCOMPAT_FILETYPE) != 0)
+    {
+        name_length = record[6];
+        entry->file_type = record[7];
+    }
+    else
+    {
+        name_length = read_little_endian_word(&record[6]);
+        entry->file_type = 0;
+    }
+    if (name_length > EXT2_NAME_MAX ||
+        name_length > record_length - 8)
+    {
+        return -1;
+    }
+
+    entry->inode = read_little_endian_dword(&record[0]);
+    entry->name_length = (unsigned short)name_length;
+    for (index = 0; index < name_length; ++index)
+    {
+        entry->name[index] = (char)record[8 + index];
+    }
+    entry->name[name_length] = '\0';
+    iterator->byte_offset += record_length;
+    return 1;
+}
+
+static int ext2_name_equals(
+    const char *left,
+    unsigned int left_length,
+    const char *right,
+    unsigned int right_length)
+{
+    unsigned int index;
+
+    if (left_length != right_length)
+    {
+        return 0;
+    }
+
+    for (index = 0; index < left_length; ++index)
+    {
+        char left_character = left[index];
+        char right_character = right[index];
+
+        if (left_character >= 'a' && left_character <= 'z')
+        {
+            left_character = (char)(left_character - 'a' + 'A');
+        }
+        if (right_character >= 'a' && right_character <= 'z')
+        {
+            right_character = (char)(right_character - 'a' + 'A');
+        }
+        if (left_character != right_character)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int ext2_lookup_root_file(
+    const Ext2FileSystem *filesystem,
+    const char *name,
+    unsigned int name_length,
+    Ext2Inode *file_inode)
+{
+    Ext2Inode root_inode;
+    Ext2DirectoryIterator iterator;
+    Ext2DirectoryEntry entry;
+    int result;
+
+    if (!ext2_read_inode(filesystem, EXT2_ROOT_INODE, &root_inode) ||
+        (ext2_inode_mode(&root_inode) & EXT2_S_IFMT) != EXT2_S_IFDIR)
+    {
+        return -1;
+    }
+
+    iterator.byte_offset = 0;
+    iterator.loaded_block = 0xFFFFFFFF;
+    while ((result = ext2_directory_next(
+        filesystem, &root_inode, &iterator, &entry)) > 0)
+    {
+        if (entry.inode == 0 ||
+            !ext2_name_equals(
+                entry.name, entry.name_length, name, name_length))
+        {
+            continue;
+        }
+
+        if (!ext2_read_inode(filesystem, entry.inode, file_inode))
+        {
+            return -1;
+        }
+        if ((ext2_inode_mode(file_inode) & EXT2_S_IFMT) != EXT2_S_IFREG)
+        {
+            return 0;
+        }
+        return 1;
+    }
+
+    return result < 0 ? -1 : 0;
+}
+
+static int ext2_make_executable_name(
+    const char *name,
+    char normalized[EXT2_NAME_MAX + 1],
+    unsigned int *normalized_length)
+{
+    unsigned int length = 0;
+    unsigned int index;
+    int has_extension = 0;
+
+    if (name == 0 || name[0] == '\0')
+    {
+        return 0;
+    }
+
+    while (name[length] != '\0')
+    {
+        if (length == EXT2_NAME_MAX || name[length] == '/')
+        {
+            return 0;
+        }
+        if (name[length] == '.')
+        {
+            has_extension = 1;
+        }
+        normalized[length] = name[length];
+        ++length;
+    }
+
+    if (!has_extension)
+    {
+        static const char extension[] = ".EXE";
+
+        if (length + sizeof(extension) - 1 > EXT2_NAME_MAX)
+        {
+            return 0;
+        }
+        for (index = 0; index < sizeof(extension) - 1; ++index)
+        {
+            normalized[length++] = extension[index];
+        }
+    }
+
+    normalized[length] = '\0';
+    *normalized_length = length;
+    return 1;
+}
+
+void filesystem_list_root(void)
+{
+    Ext2FileSystem filesystem;
+    Ext2Inode root_inode;
+    Ext2DirectoryIterator iterator;
+    Ext2DirectoryEntry entry;
+    enum FileSystemError mount_result;
+    unsigned int entries_seen = 0;
+    int result;
+
+    mount_result = filesystem_mount(&filesystem);
+    if (mount_result == FILESYSTEM_DISK_READ_ERROR)
+    {
+        terminal_write("ls: could not read the ext2 filesystem from disk.\n");
+        return;
+    }
+    if (mount_result == FILESYSTEM_UNSUPPORTED_FEATURE)
+    {
+        terminal_write("ls: ext2 filesystem uses unsupported features.\n");
+        return;
+    }
+    if (mount_result != FILESYSTEM_OK ||
+        !ext2_read_inode(&filesystem, EXT2_ROOT_INODE, &root_inode) ||
+        (ext2_inode_mode(&root_inode) & EXT2_S_IFMT) != EXT2_S_IFDIR)
+    {
+        terminal_write("ls: filesystem has an invalid ext2 structure.\n");
+        return;
+    }
+
+    iterator.byte_offset = 0;
+    iterator.loaded_block = 0xFFFFFFFF;
+    while ((result = ext2_directory_next(
+        &filesystem, &root_inode, &iterator, &entry)) > 0)
+    {
+        unsigned int index;
+        unsigned int mode = 0;
+
+        if (entry.inode == 0 ||
+            (entry.name_length == 1 && entry.name[0] == '.') ||
+            (entry.name_length == 2 &&
+                entry.name[0] == '.' && entry.name[1] == '.'))
+        {
+            continue;
+        }
+
+        if (entry.file_type == 2)
+        {
+            mode = EXT2_S_IFDIR;
+        }
+        else if (entry.file_type == 1)
+        {
+            mode = EXT2_S_IFREG;
+        }
+        else
+        {
+            Ext2Inode child_inode;
+
+            if (!ext2_read_inode(&filesystem, entry.inode, &child_inode))
+            {
+                terminal_write("ls: could not read a directory entry inode.\n");
+                return;
+            }
+            mode = ext2_inode_mode(&child_inode) & EXT2_S_IFMT;
+        }
+
+        if (mode == EXT2_S_IFDIR)
+        {
+            terminal_write("[DIR]  ");
+            for (index = 0; index < entry.name_length; ++index)
+            {
+                terminal_write_character(entry.name[index]);
+            }
+            terminal_write("\n");
+        }
+        else if (mode == EXT2_S_IFREG)
+        {
+            Ext2Inode child_inode;
+
+            if (!ext2_read_inode(&filesystem, entry.inode, &child_inode))
+            {
+                terminal_write("ls: could not read a file inode.\n");
+                return;
+            }
+            for (index = 0; index < entry.name_length; ++index)
+            {
+                terminal_write_character(entry.name[index]);
+            }
+            terminal_write("  ");
+            terminal_write_unsigned(child_inode.size);
+            terminal_write(" bytes\n");
+        }
+
+        ++entries_seen;
+    }
+
+    if (result < 0)
+    {
+        terminal_write("ls: ext2 root directory is corrupt or unreadable.\n");
+    }
+    else if (entries_seen == 0)
+    {
+        terminal_write("(empty)\n");
+    }
 }
 
 enum FileReadResult filesystem_read_root_file(
@@ -529,458 +749,94 @@ enum FileReadResult filesystem_read_root_file(
     unsigned int buffer_size,
     unsigned int *file_size)
 {
-    FileSystem filesystem;
-    unsigned char sector[SECTOR_SIZE];
-    unsigned char short_name[11];
+    Ext2FileSystem filesystem;
+    Ext2Inode inode;
+    unsigned char block[EXT2_BLOCK_SIZE];
     volatile unsigned char *output_buffer = buffer;
-    unsigned int sector_index;
-    unsigned short first_cluster = 0;
-    unsigned int size = 0;
-    int found = 0;
+    char normalized_name[EXT2_NAME_MAX + 1];
+    unsigned int name_length;
+    unsigned int high_size;
+    unsigned int block_index;
+    int lookup_result;
     enum FileSystemError mount_result;
 
     if (buffer == 0 || file_size == 0 ||
-        !filesystem_make_file_name(name, short_name))
+        !ext2_make_executable_name(
+            name, normalized_name, &name_length))
     {
         return FILE_READ_INVALID_NAME;
     }
 
-    mount_result = filesystem_mount(&filesystem, sector);
+    mount_result = filesystem_mount(&filesystem);
+    if (mount_result == FILESYSTEM_DISK_READ_ERROR)
+    {
+        return FILE_READ_DISK_ERROR;
+    }
     if (mount_result != FILESYSTEM_OK)
     {
-        return mount_result == FILESYSTEM_DISK_READ_ERROR
-            ? FILE_READ_DISK_ERROR
-            : FILE_READ_CORRUPT;
+        return FILE_READ_CORRUPT;
     }
 
-    for (sector_index = 0;
-        sector_index < filesystem.root_sector_count && !found;
-        ++sector_index)
+    lookup_result = ext2_lookup_root_file(
+        &filesystem, normalized_name, name_length, &inode);
+    if (lookup_result < 0)
     {
-        unsigned int entry_index;
-
-        if (!ata_read_sector(
-            filesystem.root_sector + sector_index, sector))
-        {
-            return FILE_READ_DISK_ERROR;
-        }
-
-        for (entry_index = 0; entry_index < SECTOR_SIZE / 32; ++entry_index)
-        {
-            const unsigned char *entry = &sector[entry_index * 32];
-            unsigned int name_index;
-            int name_matches = 1;
-
-            if (entry[0] == 0)
-            {
-                break;
-            }
-            if (entry[0] == 0xE5 ||
-                (entry[11] & 0x18) != 0 ||
-                entry[11] == 0x0F)
-            {
-                continue;
-            }
-
-            name_matches = 1;
-            for (name_index = 0; name_index < sizeof(short_name); ++name_index)
-            {
-                if (entry[name_index] != short_name[name_index])
-                {
-                    name_matches = 0;
-                    break;
-                }
-            }
-            if (name_matches)
-            {
-                first_cluster = read_little_endian_word(&entry[26]);
-                size = read_little_endian_dword(&entry[28]);
-                found = 1;
-                break;
-            }
-        }
+        return FILE_READ_CORRUPT;
     }
-
-    if (!found)
+    if (lookup_result == 0)
     {
         return FILE_READ_NOT_FOUND;
     }
-    if (size > buffer_size)
+
+    high_size = inode.size_high;
+    if (high_size != 0)
     {
         return FILE_READ_TOO_LARGE;
     }
-    *file_size = size;
-    if (size == 0)
+    if (inode.size > buffer_size)
     {
-        return FILE_READ_OK;
+        return FILE_READ_TOO_LARGE;
     }
+    *file_size = inode.size;
 
+    for (block_index = 0;
+        block_index * EXT2_BLOCK_SIZE < inode.size;
+        ++block_index)
     {
-        unsigned int remaining = size;
-        unsigned int clusters_read = 0;
-        unsigned short cluster = first_cluster;
+        unsigned int physical_block;
+        unsigned int bytes_to_copy =
+            inode.size - block_index * EXT2_BLOCK_SIZE;
+        unsigned int byte_index;
 
-        while (remaining != 0)
+        if (bytes_to_copy > EXT2_BLOCK_SIZE)
         {
-            unsigned int cluster_sector;
-
-            if (cluster < 2 ||
-                cluster >= filesystem.cluster_count + 2 ||
-                clusters_read >= filesystem.cluster_count)
+            bytes_to_copy = EXT2_BLOCK_SIZE;
+        }
+        if (!ext2_get_inode_block(
+            &filesystem, &inode, block_index, &physical_block))
+        {
+            return FILE_READ_CORRUPT;
+        }
+        if (physical_block == 0)
+        {
+            for (byte_index = 0; byte_index < bytes_to_copy; ++byte_index)
             {
-                return FILE_READ_CORRUPT;
+                output_buffer[block_index * EXT2_BLOCK_SIZE + byte_index] = 0;
             }
-            ++clusters_read;
-
-            for (cluster_sector = 0;
-                cluster_sector < filesystem.sectors_per_cluster &&
-                    remaining != 0;
-                ++cluster_sector)
+        }
+        else
+        {
+            if (!ext2_read_block(&filesystem, physical_block, block))
             {
-                unsigned int lba =
-                    filesystem.data_start_sector +
-                    ((unsigned int)cluster - 2) *
-                        filesystem.sectors_per_cluster +
-                    cluster_sector;
-                unsigned int bytes_to_copy =
-                    remaining < SECTOR_SIZE ? remaining : SECTOR_SIZE;
-                unsigned int byte_index;
-
-                if (!ata_read_sector(lba, sector))
-                {
-                    return FILE_READ_DISK_ERROR;
-                }
-                for (byte_index = 0;
-                    byte_index < bytes_to_copy;
-                    ++byte_index)
-                {
-                    output_buffer[size - remaining + byte_index] =
-                        sector[byte_index];
-                }
-                remaining -= bytes_to_copy;
+                return FILE_READ_DISK_ERROR;
             }
-
-            if (remaining != 0)
+            for (byte_index = 0; byte_index < bytes_to_copy; ++byte_index)
             {
-                unsigned int fat_offset = (unsigned int)cluster * 2;
-                unsigned int fat_lba =
-                    filesystem.fat_start_sector +
-                    fat_offset / SECTOR_SIZE;
-
-                if (!ata_read_sector(fat_lba, sector))
-                {
-                    return FILE_READ_DISK_ERROR;
-                }
-                cluster = read_little_endian_word(
-                    &sector[fat_offset % SECTOR_SIZE]);
-                if (cluster >= 0xFFF8 || cluster < 2)
-                {
-                    return FILE_READ_CORRUPT;
-                }
+                output_buffer[block_index * EXT2_BLOCK_SIZE + byte_index] =
+                    block[byte_index];
             }
         }
     }
 
     return FILE_READ_OK;
-}
-
-static int filesystem_find_root_slot(
-    const FileSystem *filesystem,
-    const unsigned char short_name[11],
-    unsigned int *slot_index,
-    unsigned char *sector)
-{
-    unsigned int sector_index;
-    unsigned int deleted_slot = filesystem->root_entry_count;
-
-    for (sector_index = 0;
-        sector_index < filesystem->root_sector_count;
-        ++sector_index)
-    {
-        unsigned int entry_index;
-
-        if (!ata_read_sector(filesystem->root_sector + sector_index, sector))
-        {
-            return -1;
-        }
-
-        for (entry_index = 0; entry_index < SECTOR_SIZE / 32; ++entry_index)
-        {
-            unsigned int index =
-                sector_index * (SECTOR_SIZE / 32) + entry_index;
-            unsigned char *entry = &sector[entry_index * 32];
-
-            if (index >= filesystem->root_entry_count)
-            {
-                break;
-            }
-
-            if (entry[0] == 0)
-            {
-                *slot_index = deleted_slot == filesystem->root_entry_count
-                    ? index
-                    : deleted_slot;
-                return 1;
-            }
-
-            if (entry[0] == 0xE5)
-            {
-                if (deleted_slot == filesystem->root_entry_count)
-                {
-                    deleted_slot = index;
-                }
-                continue;
-            }
-
-            if (entry[11] != 0x0F && (entry[11] & 0x08) == 0 &&
-                (entry[11] & 0x10) != 0)
-            {
-                unsigned int name_index;
-
-                for (name_index = 0; name_index < 11; ++name_index)
-                {
-                    if (entry[name_index] != short_name[name_index])
-                    {
-                        break;
-                    }
-                }
-
-                if (name_index == 11)
-                {
-                    return 0;
-                }
-            }
-        }
-    }
-
-    if (deleted_slot != filesystem->root_entry_count)
-    {
-        *slot_index = deleted_slot;
-        return 1;
-    }
-
-    return 2;
-}
-
-static int filesystem_find_free_cluster(
-    const FileSystem *filesystem,
-    unsigned char *sector,
-    unsigned short *free_cluster)
-{
-    unsigned int cluster;
-    unsigned int cached_fat_sector = DISK_SECTOR_COUNT;
-
-    for (cluster = 2; cluster < filesystem->cluster_count + 2; ++cluster)
-    {
-        unsigned int fat_offset = cluster * 2;
-        unsigned int lba =
-            filesystem->fat_start_sector + fat_offset / SECTOR_SIZE;
-        unsigned int offset = fat_offset % SECTOR_SIZE;
-
-        if (lba != cached_fat_sector)
-        {
-            if (!ata_read_sector(lba, sector))
-            {
-                return 0;
-            }
-            cached_fat_sector = lba;
-        }
-
-        if (read_little_endian_word(&sector[offset]) == 0)
-        {
-            *free_cluster = (unsigned short)cluster;
-            return 1;
-        }
-    }
-
-    return -1;
-}
-
-static int filesystem_mark_cluster_used(
-    const FileSystem *filesystem,
-    unsigned short cluster,
-    unsigned char *sector)
-{
-    unsigned int fat_offset = (unsigned int)cluster * 2;
-    unsigned int lba =
-        filesystem->fat_start_sector + fat_offset / SECTOR_SIZE;
-    unsigned int offset = fat_offset % SECTOR_SIZE;
-    unsigned int fat_copy;
-
-    if (!ata_read_sector(lba, sector))
-    {
-        return 0;
-    }
-
-    sector[offset] = 0xFF;
-    sector[offset + 1] = 0xFF;
-
-    for (fat_copy = 0; fat_copy < filesystem->fat_count; ++fat_copy)
-    {
-        unsigned int copy_lba =
-            lba + fat_copy * filesystem->sectors_per_fat;
-
-        if (fat_copy != 0 && !ata_read_sector(copy_lba, sector))
-        {
-            return 0;
-        }
-
-        sector[offset] = 0xFF;
-        sector[offset + 1] = 0xFF;
-        if (!ata_write_sector(copy_lba, sector))
-        {
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
-static int filesystem_initialize_directory(
-    const FileSystem *filesystem,
-    unsigned short cluster,
-    unsigned char *sector)
-{
-    unsigned int sector_index;
-    unsigned int cluster_start =
-        filesystem->data_start_sector +
-        ((unsigned int)cluster - 2) * filesystem->sectors_per_cluster;
-
-    for (sector_index = 0;
-        sector_index < filesystem->sectors_per_cluster;
-        ++sector_index)
-    {
-        __stosw((unsigned short *)sector, 0, SECTOR_SIZE / 2);
-
-        if (sector_index == 0)
-        {
-            unsigned int index;
-
-            sector[0] = '.';
-            for (index = 1; index < 11; ++index)
-            {
-                sector[index] = ' ';
-            }
-            sector[11] = 0x10;
-            sector[16] = 0x21;
-            sector[24] = 0x21;
-            sector[26] = (unsigned char)cluster;
-            sector[27] = (unsigned char)(cluster >> 8);
-
-            sector[32] = '.';
-            sector[33] = '.';
-            for (index = 34; index < 43; ++index)
-            {
-                sector[index] = ' ';
-            }
-            sector[43] = 0x10;
-            sector[48] = 0x21;
-            sector[56] = 0x21;
-
-            if (!ata_write_sector(cluster_start, sector))
-            {
-                return 0;
-            }
-        }
-        else if (!ata_write_sector(cluster_start + sector_index, sector))
-        {
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
-enum CreateDirectoryResult filesystem_create_root_directory(
-    const char *name)
-{
-    FileSystem filesystem;
-    unsigned char sector[SECTOR_SIZE];
-    unsigned char short_name[11];
-    unsigned int slot_index;
-    unsigned int slot_lba;
-    unsigned int slot_offset;
-    unsigned short cluster;
-    int slot_result;
-    int cluster_result;
-    enum FileSystemError mount_result;
-
-    if (!filesystem_make_short_name(name, short_name))
-    {
-        return CREATE_DIRECTORY_INVALID_NAME;
-    }
-
-    mount_result = filesystem_mount(&filesystem, sector);
-    if (mount_result != FILESYSTEM_OK)
-    {
-        return CREATE_DIRECTORY_FILESYSTEM_ERROR;
-    }
-
-    slot_index = filesystem.root_entry_count;
-    slot_result = filesystem_find_root_slot(
-        &filesystem, short_name, &slot_index, sector);
-    if (slot_result == -1)
-    {
-        return CREATE_DIRECTORY_IO_ERROR;
-    }
-    if (slot_result == 0)
-    {
-        return CREATE_DIRECTORY_EXISTS;
-    }
-    if (slot_result == 2)
-    {
-        return CREATE_DIRECTORY_ROOT_FULL;
-    }
-
-    cluster_result = filesystem_find_free_cluster(
-        &filesystem, sector, &cluster);
-    if (cluster_result == 0)
-    {
-        return CREATE_DIRECTORY_IO_ERROR;
-    }
-    if (cluster_result < 0)
-    {
-        return CREATE_DIRECTORY_DISK_FULL;
-    }
-
-    if (!filesystem_mark_cluster_used(&filesystem, cluster, sector) ||
-        !filesystem_initialize_directory(&filesystem, cluster, sector))
-    {
-        return CREATE_DIRECTORY_IO_ERROR;
-    }
-
-    slot_lba =
-        filesystem.root_sector + slot_index / (SECTOR_SIZE / 32);
-    slot_offset = (slot_index % (SECTOR_SIZE / 32)) * 32;
-    if (!ata_read_sector(slot_lba, sector))
-    {
-        return CREATE_DIRECTORY_IO_ERROR;
-    }
-
-    {
-        unsigned int index;
-        unsigned char *entry = &sector[slot_offset];
-
-        for (index = 0; index < 32; ++index)
-        {
-            entry[index] = 0;
-        }
-
-        for (index = 0; index < 11; ++index)
-        {
-            entry[index] = short_name[index];
-        }
-        entry[11] = 0x10;
-        entry[16] = 0x21;
-        entry[24] = 0x21;
-        entry[26] = (unsigned char)cluster;
-        entry[27] = (unsigned char)(cluster >> 8);
-    }
-
-    if (!ata_write_sector(slot_lba, sector))
-    {
-        return CREATE_DIRECTORY_IO_ERROR;
-    }
-
-    return CREATE_DIRECTORY_OK;
 }

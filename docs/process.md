@@ -8,7 +8,7 @@ not isolated from the kernel or from one another.
 ## Starting a process
 
 When a command is not a built-in shell command, the shell passes it to
-`process_start` as a root-directory FAT16 filename. For example, entering
+`process_start` as an ext2 root-directory filename. For example, entering
 `COUNTDOWN.EXE` asks the filesystem to read that file. The loader disables
 interrupts while it prepares the process so that the timer cannot schedule a
 partially initialized task.

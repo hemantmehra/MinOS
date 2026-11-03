@@ -10,74 +10,52 @@ SECTOR_SIZE = 512
 KERNEL_SECTOR_COUNT = 128
 ENTRY_PLACEHOLDER = 0xC0DEF00D
 FILESYSTEM_START_SECTOR = KERNEL_SECTOR_COUNT + 1
-FAT16_ROOT_ENTRY_COUNT = 512
-FAT16_RESERVED_SECTORS = 1
-FAT16_COUNT = 2
-FAT16_MEDIA_DESCRIPTOR = 0xF8
-FAT16_END_OF_CHAIN = 0xFFFF
+EXT2_BLOCK_SIZE = 1024
+EXT2_FIRST_DATA_BLOCK = 1
+EXT2_BLOCKS_PER_GROUP = 8192
+EXT2_INODES_PER_GROUP = 1024
+EXT2_INODE_SIZE = 128
+EXT2_ROOT_INODE = 2
+EXT2_FIRST_DYNAMIC_INODE = 11
+EXT2_FEATURE_INCOMPAT_FILETYPE = 0x0002
+EXT2_S_IFREG = 0x8000
+EXT2_S_IFDIR = 0x4000
+EXT2_DIRECTORY_FILE_TYPE = 1
+EXT2_DIRECTORY_FILE_TYPE_DIR = 2
 
 
 class Directory:
-    def __init__(self, source, short_name):
+    def __init__(self, source, name):
         self.source = source
-        self.short_name = short_name
+        self.name = name
         self.children = []
-        self.first_cluster = 0
+        self.inode = 0
+        self.parent_inode = 0
+        self.contents = b""
+        self.data_blocks = []
+        self.block_pointers = [0] * 15
+        self.indirect_blocks = []
 
 
 class File:
-    def __init__(self, source, short_name, contents):
+    def __init__(self, source, name, contents):
         self.source = source
-        self.short_name = short_name
+        self.name = name
         self.contents = contents
-        self.first_cluster = 0
-
-
-def create_short_name(name, used_names):
-    if "." in name and not name.startswith("."):
-        base, extension = name.rsplit(".", 1)
-    else:
-        base, extension = name, ""
-
-    def sanitize(value):
-        characters = []
-        for character in value.upper():
-            if "A" <= character <= "Z" or "0" <= character <= "9":
-                characters.append(character)
-            elif character in "$%'-_@~`!(){}^#&":
-                characters.append(character)
-            else:
-                characters.append("_")
-        return "".join(characters) or "_"
-
-    sanitized_base = sanitize(base)
-    sanitized_extension = sanitize(extension) if extension else ""
-    candidate_base = sanitized_base[:8]
-    candidate_extension = sanitized_extension[:3]
-    candidate = (
-        candidate_base.ljust(8) + candidate_extension.ljust(3)
-    ).encode("ascii")
-    if candidate not in used_names:
-        used_names.add(candidate)
-        return candidate
-
-    for suffix in range(1, 1000000):
-        marker = f"~{suffix}"
-        prefix = sanitized_base[: 8 - len(marker)]
-        candidate = (
-            (prefix + marker).ljust(8) + sanitized_extension[:3].ljust(3)
-        ).encode("ascii")
-        if candidate not in used_names:
-            used_names.add(candidate)
-            return candidate
-
-    raise ValueError(f"Unable to create a unique FAT16 name for {name!r}.")
+        self.inode = 0
+        self.parent_inode = 0
+        self.data_blocks = []
+        self.block_pointers = [0] * 15
+        self.indirect_blocks = []
 
 
 def source_entries(directory):
     excluded_directories = {".git", "build", "__pycache__"}
     entries = []
-    for child in sorted(directory.iterdir(), key=lambda item: (item.name.casefold(), item.name)):
+    for child in sorted(
+        directory.iterdir(),
+        key=lambda item: (item.name.casefold(), item.name),
+    ):
         if child.is_symlink():
             continue
         if child.is_dir():
@@ -88,195 +66,376 @@ def source_entries(directory):
     return entries
 
 
-def build_directory(source, short_name):
-    directory = Directory(source, short_name)
-    used_names = set()
+def build_directory(source, name):
+    directory = Directory(source, name)
+    if source is None:
+        return directory
 
     for child, contents in source_entries(source):
-        name = create_short_name(child.name, used_names)
         if contents is None:
-            directory.children.append(build_directory(child, name))
+            directory.children.append(build_directory(child, child.name))
         else:
-            directory.children.append(File(child, name, contents))
-
+            directory.children.append(File(child, child.name, contents))
     return directory
 
 
-def write_fat_entry(fat, cluster, value):
-    struct.pack_into("<H", fat, cluster * 2, value)
+def validate_name(name):
+    encoded = name.encode("utf-8")
+    if (
+        not encoded
+        or len(encoded) > 255
+        or b"/" in encoded
+        or b"\0" in encoded
+        or name in (".", "..")
+    ):
+        raise ValueError(f"Invalid ext2 filename: {name!r}.")
 
 
-def allocate_clusters(count, next_cluster, max_cluster, fat):
-    end = next_cluster + count
-    if end > max_cluster + 1:
-        raise ValueError(
-            "The files in the workspace exceed the available FAT16 disk space."
-        )
-    clusters = list(range(next_cluster, end))
-    for index, cluster in enumerate(clusters):
-        next_value = clusters[index + 1] if index + 1 < count else FAT16_END_OF_CHAIN
-        write_fat_entry(fat, cluster, next_value)
-    return clusters, end
-
-
-def directory_entry(short_name, attributes, first_cluster=0, file_size=0):
-    entry = bytearray(32)
-    entry[:11] = short_name
-    entry[11] = attributes
-    entry[16] = 0x21
-    entry[24] = 0x21
-    struct.pack_into("<H", entry, 26, first_cluster)
-    struct.pack_into("<I", entry, 28, file_size)
-    return entry
-
-
-def encode_directory(directory, parent_cluster):
-    entries = []
-    if directory.source is not None:
-        entries.append(directory_entry(b".          ", 0x10, directory.first_cluster))
-        entries.append(directory_entry(b"..         ", 0x10, parent_cluster))
-
+def assign_inode_children(directory, next_inode, nodes):
     for child in directory.children:
+        child.parent_inode = directory.inode
+        if next_inode > 2048:
+            raise ValueError("The workspace has too many files for the ext2 image.")
+        child.inode = next_inode
+        next_inode += 1
+        nodes.append(child)
         if isinstance(child, Directory):
-            entries.append(directory_entry(child.short_name, 0x10, child.first_cluster))
-        else:
-            entries.append(
-                directory_entry(
-                    child.short_name,
-                    0x20,
-                    child.first_cluster,
-                    len(child.contents),
-                )
-            )
-    entries.append(bytearray(32))
-    return b"".join(entries)
+            next_inode = assign_inode_children(child, next_inode, nodes)
+    return next_inode
 
 
-def populate_fat16(volume, files_root, extra_files=()):
-    total_sectors = len(volume) // SECTOR_SIZE
-    root_sectors = math.ceil(FAT16_ROOT_ENTRY_COUNT * 32 / SECTOR_SIZE)
-    fat_sectors = 1
-    while True:
-        data_clusters = (
-            total_sectors
-            - FAT16_RESERVED_SECTORS
-            - FAT16_COUNT * fat_sectors
-            - root_sectors
+def encode_directory(directory):
+    entries = [
+        (directory.inode, ".", EXT2_DIRECTORY_FILE_TYPE_DIR),
+        (directory.parent_inode, "..", EXT2_DIRECTORY_FILE_TYPE_DIR),
+    ]
+    for child in directory.children:
+        file_type = (
+            EXT2_DIRECTORY_FILE_TYPE_DIR
+            if isinstance(child, Directory)
+            else EXT2_DIRECTORY_FILE_TYPE
         )
-        required_fat_sectors = math.ceil((data_clusters + 2) * 2 / SECTOR_SIZE)
-        if required_fat_sectors == fat_sectors:
-            break
-        fat_sectors = required_fat_sectors
+        entries.append((child.inode, child.name, file_type))
 
-    if not 4085 <= data_clusters < 65525:
-        raise ValueError("The boot disk image cannot be represented as FAT16.")
+    encoded = bytearray()
+    entry_index = 0
+    while entry_index < len(entries):
+        block = bytearray(EXT2_BLOCK_SIZE)
+        block_offset = 0
+        while entry_index < len(entries):
+            inode, name, file_type = entries[entry_index]
+            name_bytes = name.encode("utf-8")
+            minimum_length = (8 + len(name_bytes) + 3) & ~3
+            remaining = EXT2_BLOCK_SIZE - block_offset
+            if minimum_length > remaining:
+                raise ValueError(f"Directory entry does not fit: {name!r}.")
 
-    root_sector = FAT16_RESERVED_SECTORS + FAT16_COUNT * fat_sectors
-    data_sector = root_sector + root_sectors
-    fat = bytearray(fat_sectors * SECTOR_SIZE)
-    write_fat_entry(fat, 0, (FAT16_MEDIA_DESCRIPTOR << 8) | 0xFF)
-    write_fat_entry(fat, 1, FAT16_END_OF_CHAIN)
-    root = Directory(None, b"MINIOS     ")
-    next_cluster = 2
-    children = build_directory(files_root, root.short_name).children
-    used_names = {child.short_name for child in children}
+            next_minimum_length = 0
+            if entry_index + 1 < len(entries):
+                next_name = entries[entry_index + 1][1].encode("utf-8")
+                next_minimum_length = (8 + len(next_name) + 3) & ~3
+            last_in_block = (
+                entry_index + 1 == len(entries)
+                or minimum_length + next_minimum_length > remaining
+            )
+            record_length = remaining if last_in_block else minimum_length
+
+            struct.pack_into(
+                "<I H B B",
+                block,
+                block_offset,
+                inode,
+                record_length,
+                len(name_bytes),
+                file_type,
+            )
+            block[block_offset + 8 : block_offset + 8 + len(name_bytes)] = (
+                name_bytes
+            )
+            block_offset += record_length
+            entry_index += 1
+            if last_in_block:
+                break
+
+        encoded.extend(block)
+    return bytes(encoded)
+
+
+def write_block(volume, block_number, data):
+    if len(data) != EXT2_BLOCK_SIZE:
+        raise ValueError("An ext2 block must be exactly 1024 bytes.")
+    start = block_number * EXT2_BLOCK_SIZE
+    end = start + EXT2_BLOCK_SIZE
+    if end > len(volume):
+        raise ValueError("The ext2 filesystem image is out of space.")
+    volume[start:end] = data
+
+
+def pack_inode(
+    node,
+    directory_links,
+):
+    inode = bytearray(EXT2_INODE_SIZE)
+    is_directory = isinstance(node, Directory)
+    mode = EXT2_S_IFDIR | 0o755 if is_directory else EXT2_S_IFREG | 0o644
+    size = len(node.contents)
+    sectors = (len(node.data_blocks) + len(node.indirect_blocks)) * 2
+    struct.pack_into("<H", inode, 0, mode)
+    struct.pack_into("<I", inode, 4, size)
+    struct.pack_into(
+        "<H",
+        inode,
+        26,
+        2 + directory_links if is_directory else 1,
+    )
+    struct.pack_into("<I", inode, 28, sectors)
+    for index, block in enumerate(node.block_pointers):
+        struct.pack_into("<I", inode, 40 + index * 4, block)
+    return inode
+
+
+def allocate_inode_blocks(node, allocate_block, write_block_callback):
+    if isinstance(node, Directory):
+        node.contents = encode_directory(node)
+    if not node.contents:
+        return
+
+    block_count = math.ceil(len(node.contents) / EXT2_BLOCK_SIZE)
+    node.data_blocks = [allocate_block() for _ in range(block_count)]
+    for index, block_number in enumerate(node.data_blocks):
+        chunk = node.contents[
+            index * EXT2_BLOCK_SIZE : (index + 1) * EXT2_BLOCK_SIZE
+        ]
+        write_block_callback(
+            block_number,
+            chunk.ljust(EXT2_BLOCK_SIZE, b"\0"),
+        )
+
+    direct_count = min(12, block_count)
+    node.block_pointers[:direct_count] = node.data_blocks[:direct_count]
+    remainder = node.data_blocks[direct_count:]
+    if not remainder:
+        return
+
+    single_count = min(EXT2_BLOCK_SIZE // 4, len(remainder))
+    single_block = allocate_block()
+    node.indirect_blocks.append(single_block)
+    single_data = bytearray(EXT2_BLOCK_SIZE)
+    for index, block_number in enumerate(remainder[:single_count]):
+        struct.pack_into("<I", single_data, index * 4, block_number)
+    write_block_callback(single_block, single_data)
+    node.block_pointers[12] = single_block
+
+    remainder = remainder[single_count:]
+    if not remainder:
+        return
+
+    double_root = allocate_block()
+    node.indirect_blocks.append(double_root)
+    double_data = bytearray(EXT2_BLOCK_SIZE)
+    for index in range(0, len(remainder), EXT2_BLOCK_SIZE // 4):
+        group = remainder[index : index + EXT2_BLOCK_SIZE // 4]
+        indirect_block = allocate_block()
+        node.indirect_blocks.append(indirect_block)
+        indirect_data = bytearray(EXT2_BLOCK_SIZE)
+        for pointer_index, block_number in enumerate(group):
+            struct.pack_into("<I", indirect_data, pointer_index * 4, block_number)
+        write_block_callback(indirect_block, indirect_data)
+        struct.pack_into("<I", double_data, (index // 256) * 4, indirect_block)
+    write_block_callback(double_root, double_data)
+    node.block_pointers[13] = double_root
+
+
+def populate_ext2(volume, files_root, extra_files=()):
+    block_count = len(volume) // EXT2_BLOCK_SIZE
+    group_count = math.ceil(
+        (block_count - EXT2_FIRST_DATA_BLOCK) / EXT2_BLOCKS_PER_GROUP
+    )
+    inode_count = group_count * EXT2_INODES_PER_GROUP
+    inode_table_blocks = math.ceil(
+        EXT2_INODES_PER_GROUP * EXT2_INODE_SIZE / EXT2_BLOCK_SIZE
+    )
+    group_descriptors = []
+    used_blocks = {0}
+    used_inodes = set(range(1, EXT2_FIRST_DYNAMIC_INODE))
+
+    if (group_count * 32) > EXT2_BLOCK_SIZE:
+        raise ValueError("The ext2 group descriptor table is too large.")
+
+    root = build_directory(files_root, "/")
+    root.inode = EXT2_ROOT_INODE
+    root.parent_inode = EXT2_ROOT_INODE
+    used_names = {child.name for child in root.children}
     for name, path in extra_files:
-        short_name = create_short_name(name, set())
-        if short_name in used_names:
+        validate_name(name)
+        if name in used_names:
             raise ValueError(f"Extra disk file {name!r} conflicts with a workspace file.")
         if not path.is_file():
             raise ValueError(f"Extra disk file does not exist: {path}")
-        used_names.add(short_name)
-        children.append(File(path, short_name, path.read_bytes()))
+        used_names.add(name)
+        root.children.append(File(path, name, path.read_bytes()))
 
-    def allocate_directory(directory, parent_cluster):
-        nonlocal next_cluster
-        encoded = encode_directory(directory, parent_cluster)
-        cluster_count = max(1, math.ceil(len(encoded) / SECTOR_SIZE))
-        clusters, next_cluster = allocate_clusters(
-            cluster_count, next_cluster, data_clusters + 1, fat
+    nodes = []
+    assign_inode_children(root, EXT2_FIRST_DYNAMIC_INODE, nodes)
+    nodes.insert(0, root)
+    for node in nodes:
+        used_inodes.add(node.inode)
+        validate_name(node.name) if node is not root else None
+
+    for group in range(group_count):
+        group_start = EXT2_FIRST_DATA_BLOCK + group * EXT2_BLOCKS_PER_GROUP
+        group_end = min(group_start + EXT2_BLOCKS_PER_GROUP, block_count)
+        block_bitmap = group_start + 2
+        inode_bitmap = group_start + 3
+        inode_table = group_start + 4
+        metadata_end = inode_table + inode_table_blocks
+        if metadata_end > group_end:
+            raise ValueError("Ext2 group metadata does not fit in the disk image.")
+        group_descriptors.append(
+            {
+                "start": group_start,
+                "end": group_end,
+                "block_bitmap": block_bitmap,
+                "inode_bitmap": inode_bitmap,
+                "inode_table": inode_table,
+                "free_blocks": 0,
+                "free_inodes": 0,
+                "used_directories": 0,
+            }
         )
-        directory.first_cluster = clusters[0]
-        encoded = encode_directory(directory, parent_cluster)
-        for cluster in clusters:
-            sector = data_sector + cluster - 2
-            start = sector * SECTOR_SIZE
-            chunk_index = cluster - clusters[0]
-            chunk = encoded[
-                chunk_index * SECTOR_SIZE : (chunk_index + 1) * SECTOR_SIZE
-            ]
-            volume[start : start + len(chunk)] = chunk
-        for child in directory.children:
-            if isinstance(child, Directory):
-                allocate_directory(child, directory.first_cluster)
+        used_blocks.update(range(group_start, metadata_end))
+        if group == 0:
+            used_blocks.add(group_start + 1)
+        else:
+            used_blocks.add(group_start)
+            used_blocks.add(group_start + 1)
 
-    def allocate_file(file):
-        nonlocal next_cluster
-        if not file.contents:
-            return
-        cluster_count = math.ceil(len(file.contents) / SECTOR_SIZE)
-        clusters, next_cluster = allocate_clusters(
-            cluster_count, next_cluster, data_clusters + 1, fat
+    next_block = EXT2_FIRST_DATA_BLOCK
+
+    def allocate_block():
+        nonlocal next_block
+        while next_block < block_count and next_block in used_blocks:
+            next_block += 1
+        if next_block >= block_count:
+            raise ValueError("The workspace exceeds the available ext2 disk space.")
+        result = next_block
+        used_blocks.add(result)
+        next_block += 1
+        return result
+
+    def write_ext2_block(block_number, data):
+        write_block(volume, block_number, data)
+
+    for node in nodes:
+        allocate_inode_blocks(node, allocate_block, write_ext2_block)
+
+    for node in nodes:
+        group = (node.inode - 1) // EXT2_INODES_PER_GROUP
+        inode_index = (node.inode - 1) % EXT2_INODES_PER_GROUP
+        descriptor = group_descriptors[group]
+        inode_table_offset = (
+            descriptor["inode_table"] * EXT2_BLOCK_SIZE
+            + inode_index * EXT2_INODE_SIZE
         )
-        file.first_cluster = clusters[0]
-        for index, cluster in enumerate(clusters):
-            sector = data_sector + cluster - 2
-            start = sector * SECTOR_SIZE
-            chunk = file.contents[index * SECTOR_SIZE : (index + 1) * SECTOR_SIZE]
-            volume[start : start + len(chunk)] = chunk
+        child_directories = sum(
+            isinstance(child, Directory) for child in node.children
+        ) if isinstance(node, Directory) else 0
+        inode_data = pack_inode(node, child_directories)
+        volume[inode_table_offset : inode_table_offset + EXT2_INODE_SIZE] = (
+            inode_data
+        )
+        if isinstance(node, Directory):
+            descriptor["used_directories"] += 1
 
-    root.children = children
-    if len(root.children) + 2 > FAT16_ROOT_ENTRY_COUNT:
-        raise ValueError("The workspace has too many root entries for this FAT16 disk.")
-    for child in root.children:
-        if isinstance(child, Directory):
-            allocate_directory(child, 0)
-        else:
-            allocate_file(child)
+    group_descriptors_data = bytearray(EXT2_BLOCK_SIZE)
+    free_blocks_total = 0
+    free_inodes_total = 0
+    for group, descriptor in enumerate(group_descriptors):
+        group_start = descriptor["start"]
+        valid_blocks = descriptor["end"] - group_start
+        valid_inodes = min(
+            EXT2_INODES_PER_GROUP,
+            inode_count - group * EXT2_INODES_PER_GROUP,
+        )
+        block_bitmap = bytearray(EXT2_BLOCK_SIZE)
+        for bit in range(EXT2_BLOCK_SIZE * 8):
+            block_number = group_start + bit
+            if bit >= valid_blocks or block_number in used_blocks:
+                block_bitmap[bit // 8] |= 1 << (bit % 8)
+        inode_bitmap = bytearray(EXT2_BLOCK_SIZE)
+        for bit in range(EXT2_BLOCK_SIZE * 8):
+            inode_number = group * EXT2_INODES_PER_GROUP + bit + 1
+            if bit >= valid_inodes or inode_number in used_inodes:
+                inode_bitmap[bit // 8] |= 1 << (bit % 8)
 
-    root_data = bytearray(root_sectors * SECTOR_SIZE)
-    root_entry = directory_entry(root.short_name, 0x08)
-    root_data[:32] = root_entry
-    for index, child in enumerate(root.children, start=1):
-        if isinstance(child, Directory):
-            entry = directory_entry(child.short_name, 0x10, child.first_cluster)
-        else:
-            entry = directory_entry(
-                child.short_name, 0x20, child.first_cluster, len(child.contents)
-            )
-        offset = index * 32
-        root_data[offset : offset + 32] = entry
+        used_block_bits = sum(
+            (block_bitmap[bit // 8] >> (bit % 8)) & 1
+            for bit in range(valid_blocks)
+        )
+        used_inode_bits = sum(
+            (inode_bitmap[bit // 8] >> (bit % 8)) & 1
+            for bit in range(valid_inodes)
+        )
+        descriptor["free_blocks"] = valid_blocks - used_block_bits
+        descriptor["free_inodes"] = valid_inodes - used_inode_bits
+        free_blocks_total += descriptor["free_blocks"]
+        free_inodes_total += descriptor["free_inodes"]
+        write_block(volume, descriptor["block_bitmap"], block_bitmap)
+        write_block(volume, descriptor["inode_bitmap"], inode_bitmap)
 
-    volume[root_sector * SECTOR_SIZE : data_sector * SECTOR_SIZE] = root_data
-    for copy_index in range(FAT16_COUNT):
-        start = (FAT16_RESERVED_SECTORS + copy_index * fat_sectors) * SECTOR_SIZE
-        volume[start : start + len(fat)] = fat
+        struct.pack_into(
+            "<I I I H H H H",
+            group_descriptors_data,
+            group * 32,
+            descriptor["block_bitmap"],
+            descriptor["inode_bitmap"],
+            descriptor["inode_table"],
+            descriptor["free_blocks"],
+            descriptor["free_inodes"],
+            descriptor["used_directories"],
+            0,
+        )
 
-    boot_sector = bytearray(SECTOR_SIZE)
-    boot_sector[:3] = b"\xeb\x3c\x90"
-    boot_sector[3:11] = b"MINIOS  "
-    struct.pack_into("<H", boot_sector, 11, SECTOR_SIZE)
-    boot_sector[13] = 1
-    struct.pack_into("<H", boot_sector, 14, FAT16_RESERVED_SECTORS)
-    boot_sector[16] = FAT16_COUNT
-    struct.pack_into("<H", boot_sector, 17, FAT16_ROOT_ENTRY_COUNT)
-    struct.pack_into("<H", boot_sector, 19, total_sectors)
-    boot_sector[21] = FAT16_MEDIA_DESCRIPTOR
-    struct.pack_into("<H", boot_sector, 22, fat_sectors)
-    struct.pack_into("<H", boot_sector, 24, 63)
-    struct.pack_into("<H", boot_sector, 26, 16)
-    struct.pack_into("<I", boot_sector, 28, FILESYSTEM_START_SECTOR)
-    boot_sector[36] = 0x80
-    boot_sector[38] = 0x29
-    struct.pack_into("<I", boot_sector, 39, 0x4D696E4F)
-    boot_sector[43:54] = b"MINIOS     "
-    boot_sector[54:62] = b"FAT16   "
-    boot_sector[510:512] = b"\x55\xaa"
-    volume[:SECTOR_SIZE] = boot_sector
+    write_block(volume, EXT2_FIRST_DATA_BLOCK + 1, group_descriptors_data)
+    for group in range(1, group_count):
+        write_block(
+            volume,
+            group_descriptors[group]["start"] + 1,
+            group_descriptors_data,
+        )
+
+    superblock = bytearray(EXT2_BLOCK_SIZE)
+    struct.pack_into("<I I I I I", superblock, 0,
+                     inode_count, block_count, 0, free_blocks_total,
+                     free_inodes_total)
+    struct.pack_into("<I", superblock, 20, EXT2_FIRST_DATA_BLOCK)
+    struct.pack_into("<I", superblock, 24, 0)
+    struct.pack_into("<I I I", superblock, 32,
+                     EXT2_BLOCKS_PER_GROUP, EXT2_BLOCKS_PER_GROUP,
+                     EXT2_INODES_PER_GROUP)
+    struct.pack_into("<H", superblock, 52, 0)
+    struct.pack_into("<H", superblock, 54, 0xFFFF)
+    struct.pack_into("<H", superblock, 56, 0xEF53)
+    struct.pack_into("<H", superblock, 58, 1)
+    struct.pack_into("<I", superblock, 76, 1)
+    struct.pack_into("<I", superblock, 84, EXT2_FIRST_DYNAMIC_INODE)
+    struct.pack_into("<H", superblock, 88, EXT2_INODE_SIZE)
+    struct.pack_into("<I", superblock, 96, EXT2_FEATURE_INCOMPAT_FILETYPE)
+    superblock[104:120] = bytes.fromhex("4d696e4f532d657874322d696d616765")
+    superblock[120:130] = b"MINOS EXT2"
+    write_block(volume, EXT2_FIRST_DATA_BLOCK, superblock)
+    for group in range(1, group_count):
+        backup_superblock = bytearray(superblock)
+        struct.pack_into("<H", backup_superblock, 90, group)
+        write_block(
+            volume,
+            group_descriptors[group]["start"],
+            backup_superblock,
+        )
 
     print(
-        f"Created FAT16 root with {len(root.children)} entries, "
-        f"{data_clusters} clusters, and {fat_sectors} sectors per FAT."
+        f"Created ext2 volume with {len(root.children)} root entries, "
+        f"{block_count} blocks, and {group_count} block groups."
     )
 
 
@@ -371,7 +530,7 @@ def build_disk(boot_path, kernel_path, output_path, files_root, extra_files=()):
     start = SECTOR_SIZE
     disk[start : start + len(payload)] = payload
     filesystem_start = FILESYSTEM_START_SECTOR * SECTOR_SIZE
-    populate_fat16(
+    populate_ext2(
         memoryview(disk)[filesystem_start:],
         files_root,
         extra_files,

@@ -128,67 +128,7 @@ static void run_command(
     }
     else if (command_token_equals(command, argument, "mkdir"))
     {
-        char *name;
-        char *name_end;
-        enum CreateDirectoryResult result;
-
-        while (is_space(*argument))
-        {
-            ++argument;
-        }
-
-        if (*argument == '\0')
-        {
-            terminal_write("Usage: mkdir <name> (1-8 letters, digits, _ or -)\n");
-            return;
-        }
-
-        name = argument;
-        while (*argument != '\0' && !is_space(*argument))
-        {
-            ++argument;
-        }
-        name_end = argument;
-
-        while (is_space(*argument))
-        {
-            ++argument;
-        }
-
-        if (*argument != '\0')
-        {
-            terminal_write("Usage: mkdir <name> (1-8 letters, digits, _ or -)\n");
-            return;
-        }
-
-        *name_end = '\0';
-        result = filesystem_create_root_directory(name);
-        switch (result)
-        {
-        case CREATE_DIRECTORY_OK:
-            terminal_write("Created directory ");
-            terminal_write(name);
-            terminal_write("\n");
-            break;
-        case CREATE_DIRECTORY_INVALID_NAME:
-            terminal_write("mkdir: name must be 1-8 letters, digits, _ or -.\n");
-            break;
-        case CREATE_DIRECTORY_EXISTS:
-            terminal_write("mkdir: directory already exists.\n");
-            break;
-        case CREATE_DIRECTORY_ROOT_FULL:
-            terminal_write("mkdir: current directory is full.\n");
-            break;
-        case CREATE_DIRECTORY_DISK_FULL:
-            terminal_write("mkdir: filesystem is full.\n");
-            break;
-        case CREATE_DIRECTORY_IO_ERROR:
-            terminal_write("mkdir: disk read or write failed.\n");
-            break;
-        default:
-            terminal_write("mkdir: could not mount the FAT16 filesystem.\n");
-            break;
-        }
+        terminal_write("mkdir: ext2 filesystem is read-only.\n");
     }
     else
     {
