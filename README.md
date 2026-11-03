@@ -48,6 +48,12 @@ restores complete general-register, segment-register, and interrupt contexts,
 and programs use `int 0x80` to print or exit. Kernel and sample programs are
 built for IA-32 integer code without SIMD or floating-point state.
 
+Bundled applications use the procedural MinOS High language. Each
+`src\programs\*.high` source is compiled by `tools\high_compiler.py` into NASM
+assembly under `build\programs\`, then assembled into an executable for the
+ext2 image. See [docs/high-language.md](docs/high-language.md) for syntax and
+built-in operations.
+
 Processes currently run in ring 0 and share the kernel address space; they
 are preemptively scheduled but are not privilege-isolated. Root-directory
 executables use the MinOS `MEXE` format: a 12-byte header (`MEXE`, 32-bit
@@ -55,17 +61,17 @@ image size, and 32-bit entry offset) followed by flat 32-bit x86 code. The
 kernel loads images up to 64 KiB from the ext2 root directory. The ext2
 filesystem uses 1 KiB blocks and is stored directly after the boot sector and
 kernel, without an MBR partition table. The kernel supports root-directory
-listing and directory creation with `mkdir`. `src\programs\hello.asm` is
-assembled as `HELLO.EXE` during the build and included in the image. Shared
+listing and directory creation with `mkdir`. `src\programs\hello.high` is
+compiled to `HELLO.EXE` during the build and included in the image. Shared
 interfaces are declared in `src\kernel.h`. The print call uses `EAX=1` and a
 null-terminated string pointer in `EBX`; `EAX=0` exits the process.
-`src\programs\countdown.asm` is assembled as `COUNTDOWN.EXE`; execute it to print
+`src\programs\countdown.high` is compiled as `COUNTDOWN.EXE`; execute it to print
 the numbers 10 through 1.
-`src\programs\paint.asm` is assembled as `PAINT.EXE`; execute `PAINT.EXE` to draw
+`src\programs\paint.high` is compiled as `PAINT.EXE`; execute `PAINT.EXE` to draw
 a red circle, green triangle, and blue rectangle. Press Escape to exit and
 restore the shell display. Applications can poll keyboard scancodes with
 `EAX=2` (returns a scancode in `EAX`, or zero when no key is available).
-`src\programs\factorial.asm` is assembled as `FACTORIAL.EXE`; run it and enter
+`src\programs\factorial.high` is compiled as `FACTORIAL.EXE`; run it and enter
 a number from 0 to 12 to display its factorial.
 
 Supported shell commands:

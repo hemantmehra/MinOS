@@ -1,0 +1,53 @@
+fn main() {
+    clear(15);
+    draw_circle(260, 360, 130, 12);
+    draw_triangle();
+    draw_rectangle();
+
+    while (key() != 1) {
+    }
+}
+
+fn draw_circle(center_x, center_y, radius, color) {
+    let y = 0 - radius;
+    let distance = 0;
+    while (y <= radius) {
+        let x = 0 - radius;
+        while (x <= radius) {
+            distance = x * x + y * y;
+            if (distance <= radius * radius) {
+                if (distance >= radius * radius - radius * 2) {
+                    pixel(center_x + x, center_y + y, color);
+                }
+            }
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+fn draw_triangle() {
+    let y = 200;
+    while (y <= 480) {
+        let half_width = (y - 200) / 2;
+        let x = 640 - half_width;
+        let right = 640 + half_width;
+        while (x <= right) {
+            pixel(x, y, 10);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}
+
+fn draw_rectangle() {
+    let y = 230;
+    while (y <= 490) {
+        let x = 930;
+        while (x <= 1170) {
+            pixel(x, y, 9);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+}

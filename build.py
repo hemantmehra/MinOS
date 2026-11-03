@@ -122,94 +122,57 @@ def main():
     if result.returncode != 0:
         raise RuntimeError("NASM failed to assemble the boot sector.")
 
-    executable = BUILD_DIRECTORY / "HELLO.EXE"
-    result = subprocess.run(
-        [
-            str(nasm),
-            "-f",
-            "bin",
-            "-o",
-            str(executable),
-            str(ROOT / "src" / "programs" / "hello.asm"),
-        ],
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("NASM failed to assemble HELLO.EXE.")
+    compiler = ROOT / "tools" / "high_compiler.py"
+    program_sources = sorted((ROOT / "src" / "programs").glob("*.high"))
+    if not program_sources:
+        raise RuntimeError("No .high program sources were found.")
 
-    countdown_executable = BUILD_DIRECTORY / "COUNTDOWN.EXE"
-    result = subprocess.run(
-        [
-            str(nasm),
-            "-f",
-            "bin",
-            "-o",
-            str(countdown_executable),
-            str(ROOT / "src" / "programs" / "countdown.asm"),
-        ],
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("NASM failed to assemble COUNTDOWN.EXE.")
+    executables = []
+    generated_directory = BUILD_DIRECTORY / "programs"
+    generated_directory.mkdir(parents=True, exist_ok=True)
+    for source in program_sources:
+        assembly = generated_directory / f"{source.stem}.asm"
+        executable = BUILD_DIRECTORY / f"{source.stem.upper()}.EXE"
+        result = subprocess.run(
+            [sys.executable, str(compiler), str(source), str(assembly)],
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to compile {source.name}.")
 
-    paint_executable = BUILD_DIRECTORY / "PAINT.EXE"
-    result = subprocess.run(
-        [
-            str(nasm),
-            "-f",
-            "bin",
-            "-o",
-            str(paint_executable),
-            str(ROOT / "src" / "programs" / "paint.asm"),
-        ],
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("NASM failed to assemble PAINT.EXE.")
-
-    factorial_executable = BUILD_DIRECTORY / "FACTORIAL.EXE"
-    result = subprocess.run(
-        [
-            str(nasm),
-            "-f",
-            "bin",
-            "-o",
-            str(factorial_executable),
-            str(ROOT / "src" / "programs" / "factorial.asm"),
-        ],
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("NASM failed to assemble FACTORIAL.EXE.")
+        result = subprocess.run(
+            [
+                str(nasm),
+                "-f",
+                "bin",
+                "-o",
+                str(executable),
+                str(assembly),
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"NASM failed to assemble {executable.name}.")
+        executables.append(executable)
 
     python = sys.executable
-    result = subprocess.run(
-        [
-            python,
-            str(ROOT / "tools" / "make_disk.py"),
-            "--boot",
-            str(boot_sector),
-            "--kernel",
-            str(BUILD_DIRECTORY / "kernel.exe"),
-            "--output",
-            str(BUILD_DIRECTORY / "helloos.img"),
-            "--files-root",
-            str(ROOT),
-            "--extra-file",
-            "HELLO.EXE",
-            str(executable),
-            "--extra-file",
-            "COUNTDOWN.EXE",
-            str(countdown_executable),
-            "--extra-file",
-            "PAINT.EXE",
-            str(paint_executable),
-            "--extra-file",
-            "FACTORIAL.EXE",
-            str(factorial_executable),
-        ],
-        check=False,
-    )
+    disk_command = [
+        python,
+        str(ROOT / "tools" / "make_disk.py"),
+        "--boot",
+        str(boot_sector),
+        "--kernel",
+        str(BUILD_DIRECTORY / "kernel.exe"),
+        "--output",
+        str(BUILD_DIRECTORY / "helloos.img"),
+        "--files-root",
+        str(ROOT),
+    ]
+    for executable in executables:
+        disk_command.extend(
+            ["--extra-file", executable.name, str(executable)]
+        )
+    result = subprocess.run(disk_command, check=False)
     if result.returncode != 0:
         raise RuntimeError("Failed to build the bootable disk image.")
 
