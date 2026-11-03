@@ -37,6 +37,7 @@ BUILTINS = {
     "read_arguments": (1, "expression"),
     "read_dir": (2, "expression"),
     "read_file": (2, "expression"),
+    "read_pipe": (1, "expression"),
     "random": (1, "expression"),
     "read_number": (2, "expression"),
     "read_line": (2, "expression"),
@@ -67,6 +68,7 @@ PROCESS_SERVICES = {
     "open_file": 18,
     "read_file": 19,
     "close_file": 20,
+    "read_pipe": 21,
 }
 
 PRECEDENCE = {
@@ -802,7 +804,7 @@ class CodeGenerator:
                 )
             self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
-        elif name in ("read_arguments", "get_current_directory"):
+        elif name in ("read_arguments", "get_current_directory", "read_pipe"):
             self._check_arity(expression, 1)
             array_expression = arguments[0]
             if array_expression["kind"] != "variable":
@@ -817,15 +819,17 @@ class CodeGenerator:
                     array_expression,
                     f"unknown array {array_name!r}",
                 )
-            if array_size < 128:
+            minimum_size = 256 if name == "read_pipe" else 128
+            if array_size < minimum_size:
                 self._error_from_expression(
                     array_expression,
-                    f"{name} buffer must contain at least 128 elements",
+                    f"{name} buffer must contain at least "
+                    f"{minimum_size} elements",
                 )
             self._line(
                 f"    lea ecx, [ebp{self.array_offsets[array_name]:+d}]"
             )
-            self._line("    mov edx, 128")
+            self._line(f"    mov edx, {minimum_size}")
             self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
         elif name == "change_directory":

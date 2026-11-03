@@ -1,9 +1,73 @@
 #include "kernel.h"
 
+static int parse_pipeline_stage(char **command, char **arguments)
+{
+    char *name_end;
+
+    while (is_space(**command))
+    {
+        ++*command;
+    }
+    if (**command == '\0')
+    {
+        return 0;
+    }
+
+    name_end = *command;
+    while (*name_end != '\0' && !is_space(*name_end))
+    {
+        ++name_end;
+    }
+    *arguments = name_end;
+    while (is_space(**arguments))
+    {
+        ++*arguments;
+    }
+    *name_end = '\0';
+    return 1;
+}
+
+static void run_pipeline(char *first_command, char *second_command)
+{
+    char *first_arguments;
+    char *second_arguments;
+    enum ProcessStartResult result;
+
+    if (!parse_pipeline_stage(&first_command, &first_arguments) ||
+        !parse_pipeline_stage(&second_command, &second_arguments))
+    {
+        terminal_write("Usage: <command> | <command>\n");
+        return;
+    }
+
+    result = process_start_pipeline(
+        first_command,
+        first_arguments,
+        second_command,
+        second_arguments);
+    if (result != PROCESS_START_OK)
+    {
+        if (result == PROCESS_START_NOT_FOUND)
+        {
+            terminal_write("pipe: executable not found.\n");
+        }
+        else if (result == PROCESS_START_LIMIT_REACHED)
+        {
+            terminal_write("pipe: process limit reached.\n");
+        }
+        else
+        {
+            terminal_write("pipe: could not start both processes.\n");
+        }
+    }
+}
+
 static void run_command(char *command)
 {
     char *argument;
     char *name_end;
+    char *pipe_separator = 0;
+    char *scan;
     unsigned int process_id;
     enum ProcessStartResult result;
 
@@ -14,6 +78,25 @@ static void run_command(char *command)
 
     if (*command == '\0')
     {
+        return;
+    }
+
+    for (scan = command; *scan != '\0'; ++scan)
+    {
+        if (*scan == '|')
+        {
+            if (pipe_separator != 0)
+            {
+                terminal_write("Usage: <command> | <command>\n");
+                return;
+            }
+            pipe_separator = scan;
+        }
+    }
+    if (pipe_separator != 0)
+    {
+        *pipe_separator = '\0';
+        run_pipeline(command, pipe_separator + 1);
         return;
     }
 

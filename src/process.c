@@ -8,6 +8,7 @@
 #define PROCESS_STACK_PAGE_COUNT 4
 #define PROCESS_SLOT_SIZE 0x00200000
 #define PROCESS_BASE 0x40000000
+#define PROCESS_PIPE_CAPACITY 16384
 #define PROCESS_SYSCALL_PRINT 1
 #define PROCESS_SYSCALL_KEYBOARD_READ 2
 #define PROCESS_SYSCALL_EXIT 0
@@ -59,9 +60,26 @@ typedef struct
     volatile unsigned char keyboard_event_write;
     char arguments[COMMAND_BUFFER_SIZE];
     char name[13];
+    unsigned int input_pipe;
+    unsigned int output_pipe;
 } Process;
 
+typedef struct
+{
+    int active;
+    unsigned int producer_id;
+    unsigned int consumer_id;
+    unsigned int read_position;
+    unsigned int write_position;
+    unsigned int buffered;
+    unsigned char producer_closed;
+    unsigned char consumer_closed;
+    unsigned char overflowed;
+    unsigned char data[PROCESS_PIPE_CAPACITY];
+} ProcessPipe;
+
 static Process processes[TASK_LIMIT];
+static ProcessPipe process_pipe;
 static unsigned int current_task;
 static unsigned int next_process_id = 1;
 
@@ -216,6 +234,87 @@ static int process_keyboard_try_read_scancode(
     return 1;
 }
 
+static int process_pipe_write(
+    unsigned int pipe_handle,
+    const unsigned char *data,
+    unsigned int length)
+{
+    unsigned int index;
+
+    if (pipe_handle != 1 || !process_pipe.active ||
+        process_pipe.consumer_closed || process_pipe.overflowed)
+    {
+        return 0;
+    }
+
+    for (index = 0; index < length; ++index)
+    {
+        if (process_pipe.buffered == PROCESS_PIPE_CAPACITY)
+        {
+            process_pipe.overflowed = 1;
+            return 0;
+        }
+        process_pipe.data[process_pipe.write_position] = data[index];
+        process_pipe.write_position =
+            (process_pipe.write_position + 1) % PROCESS_PIPE_CAPACITY;
+        ++process_pipe.buffered;
+    }
+    return 1;
+}
+
+static int process_pipe_read(
+    unsigned int pipe_handle,
+    unsigned int *destination,
+    unsigned int capacity)
+{
+    unsigned int bytes_to_read;
+    unsigned int index;
+
+    if (pipe_handle != 1 || !process_pipe.active ||
+        process_pipe.overflowed)
+    {
+        return -1;
+    }
+    if (process_pipe.buffered == 0)
+    {
+        return process_pipe.producer_closed ? -1 : 0;
+    }
+
+    bytes_to_read = process_pipe.buffered;
+    if (bytes_to_read > capacity)
+    {
+        bytes_to_read = capacity;
+    }
+    for (index = 0; index < bytes_to_read; ++index)
+    {
+        destination[index] = process_pipe.data[process_pipe.read_position];
+        process_pipe.read_position =
+            (process_pipe.read_position + 1) % PROCESS_PIPE_CAPACITY;
+    }
+    process_pipe.buffered -= bytes_to_read;
+    return (int)bytes_to_read;
+}
+
+static void process_pipe_close_endpoint(const Process *process)
+{
+    if (!process_pipe.active)
+    {
+        return;
+    }
+    if (process->process_id == process_pipe.producer_id)
+    {
+        process_pipe.producer_closed = 1;
+    }
+    if (process->process_id == process_pipe.consumer_id)
+    {
+        process_pipe.consumer_closed = 1;
+    }
+    if (process_pipe.producer_closed && process_pipe.consumer_closed)
+    {
+        process_pipe.active = 0;
+    }
+}
+
 static void process_terminate_current(void)
 {
     if (current_task != 0 &&
@@ -225,6 +324,7 @@ static void process_terminate_current(void)
             processes[current_task].process_id);
         filesystem_close_process_files(
             processes[current_task].process_id);
+        process_pipe_close_endpoint(&processes[current_task]);
         processes[current_task].state = TASK_DYING;
         current_task = find_next_active_task();
     }
@@ -237,6 +337,7 @@ static int process_print_string(
     const unsigned int end = process->code_base + process->code_size;
     const char *text;
     unsigned int index;
+    unsigned int length;
 
     if (address < process->code_base || address >= end)
     {
@@ -248,6 +349,20 @@ static int process_print_string(
     {
         if (*(const char *)index == '\0')
         {
+            if (process->output_pipe != 0)
+            {
+                length = index - address;
+                if (!process_pipe_write(
+                    process->output_pipe,
+                    (const unsigned char *)text,
+                    length))
+                {
+                    terminal_write(
+                        "process: pipe buffer full or reader closed; terminating.\n");
+                    return 0;
+                }
+                return 1;
+            }
             terminal_write(text);
             return 1;
         }
@@ -346,8 +461,11 @@ void processes_initialize(void)
         processes[slot].keyboard_event_read = 0;
         processes[slot].keyboard_event_write = 0;
         processes[slot].arguments[0] = '\0';
+        processes[slot].input_pipe = 0;
+        processes[slot].output_pipe = 0;
     }
 
+    process_pipe.active = 0;
     processes[0].state = TASK_ACTIVE;
     processes[0].process_id = 0;
     processes[0].name[0] = 's';
@@ -414,6 +532,8 @@ enum ProcessStartResult process_start(
     process->stack_page_count = 0;
     process->keyboard_event_read = 0;
     process->keyboard_event_write = 0;
+    process->input_pipe = 0;
+    process->output_pipe = 0;
     for (index = 0; index <= argument_length; ++index)
     {
         process->arguments[index] = arguments[index];
@@ -590,6 +710,96 @@ enum ProcessStartResult process_start(
     terminal_write_unsigned(pid);
     terminal_write(")\n");
     process->state = TASK_ACTIVE;
+    restore_interrupts(flags);
+    return PROCESS_START_OK;
+}
+
+enum ProcessStartResult process_start_pipeline(
+    const char *first_filename,
+    const char *first_arguments,
+    const char *second_filename,
+    const char *second_arguments)
+{
+    unsigned int flags = disable_interrupts();
+    unsigned int first_process_id;
+    unsigned int second_process_id;
+    unsigned int index;
+    Process *first_process = 0;
+    Process *second_process = 0;
+    enum ProcessStartResult result;
+
+    if (process_pipe.active)
+    {
+        restore_interrupts(flags);
+        return PROCESS_START_LIMIT_REACHED;
+    }
+
+    process_pipe.active = 1;
+    process_pipe.producer_id = 0;
+    process_pipe.consumer_id = 0;
+    process_pipe.read_position = 0;
+    process_pipe.write_position = 0;
+    process_pipe.buffered = 0;
+    process_pipe.producer_closed = 0;
+    process_pipe.consumer_closed = 0;
+    process_pipe.overflowed = 0;
+
+    result = process_start(
+        first_filename, first_arguments, &first_process_id);
+    if (result != PROCESS_START_OK)
+    {
+        process_pipe.active = 0;
+        restore_interrupts(flags);
+        return result;
+    }
+
+    for (index = 1; index < TASK_LIMIT; ++index)
+    {
+        if (processes[index].process_id == first_process_id &&
+            processes[index].state == TASK_ACTIVE)
+        {
+            first_process = &processes[index];
+            break;
+        }
+    }
+    if (first_process == 0)
+    {
+        process_pipe.active = 0;
+        restore_interrupts(flags);
+        return PROCESS_START_CLEANUP_ERROR;
+    }
+
+    process_pipe.producer_id = first_process_id;
+    first_process->output_pipe = 1;
+    result = process_start(
+        second_filename, second_arguments, &second_process_id);
+    if (result != PROCESS_START_OK)
+    {
+        process_pipe.active = 0;
+        first_process->state = TASK_DYING;
+        restore_interrupts(flags);
+        return result;
+    }
+
+    for (index = 1; index < TASK_LIMIT; ++index)
+    {
+        if (processes[index].process_id == second_process_id &&
+            processes[index].state == TASK_ACTIVE)
+        {
+            second_process = &processes[index];
+            break;
+        }
+    }
+    if (second_process == 0)
+    {
+        process_pipe.active = 0;
+        first_process->state = TASK_DYING;
+        restore_interrupts(flags);
+        return PROCESS_START_CLEANUP_ERROR;
+    }
+
+    process_pipe.consumer_id = second_process_id;
+    second_process->input_pipe = 1;
     restore_interrupts(flags);
     return PROCESS_START_OK;
 }
@@ -778,6 +988,47 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     {
         saved_stack[11] = (unsigned int)filesystem_close_file(
             process->process_id, saved_stack[8]);
+    }
+    else if (syscall_number == PROCESS_SERVICE_READ_PIPE)
+    {
+        unsigned int capacity = saved_stack[9];
+        unsigned int buffer_size;
+
+        if (capacity > 256 ||
+            capacity > 0xFFFFFFFF / sizeof(unsigned int))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            buffer_size = capacity * sizeof(unsigned int);
+            if (!process_stack_buffer_is_valid(
+                process, saved_stack[10], buffer_size))
+            {
+                saved_stack[11] = (unsigned int)-1;
+            }
+            else
+            {
+                saved_stack[11] = (unsigned int)process_pipe_read(
+                    process->input_pipe,
+                    (unsigned int *)saved_stack[10],
+                    capacity);
+            }
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_WRITE_CHARACTER &&
+        process->output_pipe != 0)
+    {
+        unsigned char character = (unsigned char)saved_stack[8];
+
+        if (!process_pipe_write(
+            process->output_pipe, &character, 1))
+        {
+            terminal_write(
+                "process: pipe buffer full or reader closed; terminating.\n");
+            process_terminate_current();
+        }
+        saved_stack[11] = 0;
     }
     else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
         syscall_number <= PROCESS_SERVICE_WRITE_CHARACTER)

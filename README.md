@@ -69,6 +69,9 @@ null-terminated string pointer in `EBX`; `EAX=0` exits the process. The
 `hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `cat`, `mkdir`, `clear`,
 `draw`, and `basic` commands are High-language programs which use kernel services for
 OS operations; `echo` remains a built-in shell command.
+The shell supports a single pipeline between programs, such as `ls | wc`.
+`src\programs\wc.high` compiles to `WC.EXE` and counts whitespace-separated
+words read from pipeline input.
 `src\programs\countdown.high` is compiled as `COUNTDOWN.EXE`; execute it to print
 the numbers 10 through 1.
 `src\programs\paint.high` is compiled as `PAINT.EXE`; execute `PAINT.EXE` to draw
@@ -107,6 +110,11 @@ Supported shell commands:
 - `cd <path>` runs `CD.EXE` to change the current directory. Paths may be
   absolute or relative and support `.` and `..`.
 - `cat <file>` runs `CAT.EXE` to display a file using file stream services.
+- `wc` runs `WC.EXE` to count whitespace-separated words from pipeline input.
+- `program [args] | program [args]` pipes one program's printed output to the
+  next program's standard input. For example, `ls | wc` counts visible
+  directory entries. Only one pipe is supported, and its in-memory buffer is
+  limited to 16 KiB.
 - `mkdir <name>` runs `MKDIR.EXE` to create a root directory. Names may contain
   1-8 letters, digits, underscores, or hyphens.
 - `clear` runs `CLEAR.EXE` to clear the screen.

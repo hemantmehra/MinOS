@@ -56,7 +56,8 @@ enum ProcessService
     PROCESS_SERVICE_CHANGE_DIRECTORY,
     PROCESS_SERVICE_OPEN_FILE,
     PROCESS_SERVICE_READ_FILE,
-    PROCESS_SERVICE_CLOSE_FILE
+    PROCESS_SERVICE_CLOSE_FILE,
+    PROCESS_SERVICE_READ_PIPE
 };
 
 void terminal_write_character(char character);
@@ -74,6 +75,11 @@ enum ProcessStartResult process_start(
     const char *filename,
     const char *arguments,
     unsigned int *process_id);
+enum ProcessStartResult process_start_pipeline(
+    const char *first_filename,
+    const char *first_arguments,
+    const char *second_filename,
+    const char *second_arguments);
 void process_list(void);
 int process_has_active_process(void);
 unsigned char process_keyboard_read_scancode(void);

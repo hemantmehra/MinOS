@@ -111,7 +111,14 @@ failure and remains available.
 | `18` | Open file | Path in `EBX`; returns a handle or `-1` |
 | `19` | Read file | Handle in `EBX`, integer buffer in `ECX`, capacity up to 256 in `EDX`; returns bytes, `0` at end, or `-1` |
 | `20` | Close file | Handle in `EBX` |
+| `21` | Read pipeline input | Writable integer buffer in `ECX`, capacity up to 256 in `EDX`; returns bytes, `0` while empty, or `-1` at end of input |
 
 File paths may be absolute or relative to the shared current directory. Reads
 return byte values in a validated integer buffer. Open files are closed
 automatically when the owning process exits.
+
+The shell accepts a single pipeline (`program [args] | program [args]`). The
+producer's printed output becomes the consumer's input; `read_pipe(buffer)` in
+High reads up to 256 bytes per call. The kernel uses one 16 KiB in-memory pipe
+buffer, so output exceeding its capacity before the consumer reads it terminates
+the producer with an error.

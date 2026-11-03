@@ -96,6 +96,9 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   elements, returning the byte count, `0` at end of file, or `-1` on error.
   `close_file(handle);` closes the file. Open files are also closed when the
   owning process exits.
+- `read_pipe(buffer)` reads up to 256 bytes from a process's standard input into
+  a local integer array of at least 256 elements. It returns the byte count,
+  `0` while the pipe is temporarily empty, or `-1` when the writer has closed.
 - `clock();`, `memory_report();`, and `process_list();` show the current time,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments
