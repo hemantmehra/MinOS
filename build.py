@@ -167,6 +167,21 @@ def main():
     if result.returncode != 0:
         raise RuntimeError("NASM failed to assemble PAINT.EXE.")
 
+    factorial_executable = BUILD_DIRECTORY / "FACTORIAL.EXE"
+    result = subprocess.run(
+        [
+            str(nasm),
+            "-f",
+            "bin",
+            "-o",
+            str(factorial_executable),
+            str(ROOT / "src" / "programs" / "factorial.asm"),
+        ],
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("NASM failed to assemble FACTORIAL.EXE.")
+
     python = sys.executable
     result = subprocess.run(
         [
@@ -189,6 +204,9 @@ def main():
             "--extra-file",
             "PAINT.EXE",
             str(paint_executable),
+            "--extra-file",
+            "FACTORIAL.EXE",
+            str(factorial_executable),
         ],
         check=False,
     )

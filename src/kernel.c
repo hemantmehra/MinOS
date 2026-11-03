@@ -267,6 +267,10 @@ void __cdecl kernel_main(void)
         unsigned int length = 0;
         char character;
 
+        while (process_has_active_process())
+        {
+        }
+
         terminal_write_prompt("minios> ");
 
         for (;;)

@@ -65,6 +65,8 @@ the numbers 10 through 1.
 a red circle, green triangle, and blue rectangle. Press Escape to exit and
 restore the shell display. Applications can poll keyboard scancodes with
 `EAX=2` (returns a scancode in `EAX`, or zero when no key is available).
+`src\programs\factorial.asm` is assembled as `FACTORIAL.EXE`; run it and enter
+a number from 0 to 12 to display its factorial.
 
 Supported shell commands:
 
@@ -76,6 +78,8 @@ Supported shell commands:
 - Enter an executable name such as `HELLO.EXE` (or `HELLO`) to start it.
   The included program prints a hello message and exits.
 - Enter `COUNTDOWN.EXE` to print 10 through 1.
+- Enter `FACTORIAL.EXE` and provide a number from 0 to 12 to calculate its
+  factorial.
 - Enter `PAINT.EXE` to run the included drawing program. Press Escape to
   return to the shell.
 - `ls` lists files in the current root directory.

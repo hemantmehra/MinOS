@@ -564,6 +564,21 @@ void process_keyboard_scancode(unsigned char scancode)
     }
 }
 
+int process_has_active_process(void)
+{
+    unsigned int slot;
+
+    for (slot = 1; slot < TASK_LIMIT; ++slot)
+    {
+        if (processes[slot].state == TASK_ACTIVE)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 void process_list(void)
 {
     unsigned int flags = disable_interrupts();

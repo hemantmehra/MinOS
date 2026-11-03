@@ -25,7 +25,10 @@ void keyboard_handle_irq(void)
     unsigned char scancode = __inbyte(0x60);
 
     process_keyboard_scancode(scancode);
-    keyboard_enqueue_scancode(scancode);
+    if (!process_has_active_process())
+    {
+        keyboard_enqueue_scancode(scancode);
+    }
     __outbyte(0x20, 0x20);
 }
 

@@ -51,6 +51,7 @@ enum ProcessStartResult process_start(
     const char *filename,
     unsigned int *process_id);
 void process_list(void);
+int process_has_active_process(void);
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack);
 unsigned int __cdecl process_system_call(unsigned int *saved_stack);
 void process_keyboard_scancode(unsigned char scancode);
