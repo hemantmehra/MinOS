@@ -1239,6 +1239,7 @@ static int ext2_normalize_directory_path(
 
 static int filesystem_prepare_path(
     const char *path,
+    char canonical[FILESYSTEM_PATH_MAX + 1],
     char normalized[FILESYSTEM_PATH_MAX + 1],
     unsigned int *drive)
 {
@@ -1249,19 +1250,6 @@ static int filesystem_prepare_path(
         return 0;
     }
 
-    if (path[0] == '/' && path[1] == 'd' && path[2] == 'a' &&
-        path[3] == 't' && path[4] == 'a' &&
-        (path[5] == '\0' || path[5] == '/'))
-    {
-        *drive = 1;
-        if (path[5] == '\0')
-        {
-            return ext2_normalize_directory_path("/", normalized);
-        }
-        return ext2_normalize_directory_path(path + 5, normalized);
-    }
-
-    *drive = 0;
     for (index = 0; path[index] != '\0'; ++index)
     {
         if (index == FILESYSTEM_PATH_MAX)
@@ -1269,7 +1257,41 @@ static int filesystem_prepare_path(
             return 0;
         }
     }
-    return ext2_normalize_directory_path(path, normalized);
+    if (!ext2_normalize_directory_path(path, canonical))
+    {
+        return 0;
+    }
+
+    if (canonical[0] == '/' && canonical[1] == 'd' &&
+        canonical[2] == 'a' && canonical[3] == 't' &&
+        canonical[4] == 'a' &&
+        (canonical[5] == '\0' || canonical[5] == '/'))
+    {
+        *drive = 1;
+        if (canonical[5] == '\0')
+        {
+            normalized[0] = '/';
+            normalized[1] = '\0';
+        }
+        else
+        {
+            for (index = 5; canonical[index] != '\0'; ++index)
+            {
+                normalized[index - 5] = canonical[index];
+            }
+            normalized[index - 5] = '\0';
+        }
+    }
+    else
+    {
+        *drive = 0;
+        for (index = 0; canonical[index] != '\0'; ++index)
+        {
+            normalized[index] = canonical[index];
+        }
+        normalized[index] = '\0';
+    }
+    return 1;
 }
 
 static void ext2_copy_inode(
@@ -1529,9 +1551,11 @@ int filesystem_open_directory(unsigned int owner, const char *path)
     unsigned int drive;
     enum FileSystemError mount_result;
     Ext2DirectoryStream *stream = 0;
+    char canonical_path[FILESYSTEM_PATH_MAX + 1];
     char normalized_path[FILESYSTEM_PATH_MAX + 1];
 
-    if (!filesystem_prepare_path(path, normalized_path, &drive))
+    if (!filesystem_prepare_path(
+        path, canonical_path, normalized_path, &drive))
     {
         return -1;
     }
@@ -1568,10 +1592,13 @@ int filesystem_change_directory(const char *path)
 {
     Ext2FileSystem filesystem;
     Ext2Inode directory_inode;
+    unsigned int drive;
+    char canonical_path[FILESYSTEM_PATH_MAX + 1];
     char normalized_path[FILESYSTEM_PATH_MAX + 1];
 
-    if (!ext2_normalize_directory_path(path, normalized_path) ||
-        filesystem_mount(&filesystem) != FILESYSTEM_OK ||
+    if (!filesystem_prepare_path(
+            path, canonical_path, normalized_path, &drive) ||
+        filesystem_mount_drive(&filesystem, drive) != FILESYSTEM_OK ||
         !ext2_lookup_directory_path(
             &filesystem, normalized_path, &directory_inode))
     {
@@ -1583,8 +1610,8 @@ int filesystem_change_directory(const char *path)
 
         do
         {
-            current_directory_path[index] = normalized_path[index];
-        } while (normalized_path[index++] != '\0');
+            current_directory_path[index] = canonical_path[index];
+        } while (canonical_path[index++] != '\0');
     }
     return 1;
 }
@@ -1700,9 +1727,11 @@ int filesystem_open_file(unsigned int owner, const char *path)
     unsigned int drive;
     enum FileSystemError mount_result;
     Ext2FileStream *stream = 0;
+    char canonical_path[FILESYSTEM_PATH_MAX + 1];
     char normalized_path[FILESYSTEM_PATH_MAX + 1];
 
-    if (!filesystem_prepare_path(path, normalized_path, &drive))
+    if (!filesystem_prepare_path(
+        path, canonical_path, normalized_path, &drive))
     {
         return -1;
     }
@@ -2106,7 +2135,7 @@ static int ext2_make_directory_name(
     return 0;
 }
 
-static int ext2_find_root_directory_slot(
+static int ext2_find_directory_slot(
     const Ext2FileSystem *filesystem,
     const Ext2Inode *root_inode,
     const char *name,
@@ -2209,7 +2238,7 @@ static void ext2_write_directory_record(
     }
 }
 
-static int ext2_add_root_directory_entry(
+static int ext2_add_directory_entry(
     const Ext2FileSystem *filesystem,
     Ext2Inode *root_inode,
     const Ext2DirectorySlot *slot,
@@ -2295,14 +2324,24 @@ static void ext2_initialize_directory_inode(
     pointers[3] = (unsigned char)(block_number >> 24);
 }
 
-static enum CreateDirectoryResult filesystem_create_root_directory_locked(
-    const char *name)
+static enum CreateDirectoryResult filesystem_create_directory_locked(
+    const char *path)
 {
     Ext2FileSystem filesystem;
-    Ext2Inode root_inode;
+    Ext2Inode parent_inode;
     Ext2Inode new_inode;
     Ext2DirectorySlot slot;
+    unsigned int drive;
     unsigned int name_length;
+    unsigned int path_length = 0;
+    unsigned int last_separator = 0;
+    unsigned int index;
+    char canonical_path[FILESYSTEM_PATH_MAX + 1];
+    char normalized_path[FILESYSTEM_PATH_MAX + 1];
+    char parent_path[FILESYSTEM_PATH_MAX + 1];
+    char name[EXT2_NAME_MAX + 1];
+    volatile char *parent_output = parent_path;
+    const volatile char *normalized_input = normalized_path;
     unsigned int inode_group;
     unsigned int inode_number;
     unsigned int inode_bit;
@@ -2320,12 +2359,55 @@ static enum CreateDirectoryResult filesystem_create_root_directory_locked(
     int block_result;
     enum FileSystemError mount_result;
 
+    if (!filesystem_prepare_path(
+            path, canonical_path, normalized_path, &drive))
+    {
+        return CREATE_DIRECTORY_INVALID_NAME;
+    }
+
+    while (normalized_path[path_length] != '\0')
+    {
+        if (normalized_path[path_length] == '/')
+        {
+            last_separator = path_length;
+        }
+        ++path_length;
+    }
+    if (path_length <= 1 || last_separator == path_length - 1)
+    {
+        return CREATE_DIRECTORY_INVALID_NAME;
+    }
+
+    name_length = path_length - last_separator - 1;
+    if (name_length > EXT2_NAME_MAX)
+    {
+        return CREATE_DIRECTORY_INVALID_NAME;
+    }
+    for (index = 0; index < name_length; ++index)
+    {
+        name[index] = normalized_path[last_separator + 1 + index];
+    }
+    name[name_length] = '\0';
     if (!ext2_make_directory_name(name, &name_length))
     {
         return CREATE_DIRECTORY_INVALID_NAME;
     }
 
-    mount_result = filesystem_mount(&filesystem);
+    if (last_separator == 0)
+    {
+        parent_path[0] = '/';
+        parent_path[1] = '\0';
+    }
+    else
+    {
+        for (index = 0; index < last_separator; ++index)
+        {
+            parent_output[index] = normalized_input[index];
+        }
+        parent_output[last_separator] = '\0';
+    }
+
+    mount_result = filesystem_mount_drive(&filesystem, drive);
     if (mount_result == FILESYSTEM_DISK_READ_ERROR)
     {
         return CREATE_DIRECTORY_IO_ERROR;
@@ -2340,14 +2422,14 @@ static enum CreateDirectoryResult filesystem_create_root_directory_locked(
     {
         return CREATE_DIRECTORY_FILESYSTEM_ERROR;
     }
-    if (!ext2_read_inode(&filesystem, EXT2_ROOT_INODE, &root_inode) ||
-        (ext2_inode_mode(&root_inode) & EXT2_S_IFMT) != EXT2_S_IFDIR)
+    if (!ext2_lookup_directory_path(
+            &filesystem, parent_path, &parent_inode))
     {
         return CREATE_DIRECTORY_FILESYSTEM_ERROR;
     }
 
-    slot_result = ext2_find_root_directory_slot(
-        &filesystem, &root_inode, name, name_length, &slot);
+    slot_result = ext2_find_directory_slot(
+        &filesystem, &parent_inode, name, name_length, &slot);
     if (slot_result == 0)
     {
         return CREATE_DIRECTORY_EXISTS;
@@ -2359,12 +2441,12 @@ static enum CreateDirectoryResult filesystem_create_root_directory_locked(
     if (slot_result == 2)
     {
         unsigned int directory_blocks =
-            root_inode.size / EXT2_BLOCK_SIZE;
+            parent_inode.size / EXT2_BLOCK_SIZE;
 
-        if (root_inode.size % EXT2_BLOCK_SIZE != 0 ||
+        if (parent_inode.size % EXT2_BLOCK_SIZE != 0 ||
             directory_blocks >= 12)
         {
-            return CREATE_DIRECTORY_ROOT_FULL;
+            return CREATE_DIRECTORY_FULL;
         }
 
         slot.logical_block = directory_blocks;
@@ -2373,9 +2455,9 @@ static enum CreateDirectoryResult filesystem_create_root_directory_locked(
         slot.minimum_record_length = 0;
         slot.unused_record = 1;
     }
-    if (root_inode.links == 0xFFFF)
+    if (parent_inode.links == 0xFFFF)
     {
-        return CREATE_DIRECTORY_ROOT_FULL;
+        return CREATE_DIRECTORY_FULL;
     }
 
     inode_result = ext2_find_free_inode(
@@ -2417,7 +2499,7 @@ static enum CreateDirectoryResult filesystem_create_root_directory_locked(
     }
 
     if (!ext2_initialize_new_directory(
-        &filesystem, block_number, inode_number, EXT2_ROOT_INODE))
+        &filesystem, block_number, inode_number, parent_inode.inode))
     {
         return CREATE_DIRECTORY_IO_ERROR;
     }
@@ -2446,7 +2528,7 @@ static enum CreateDirectoryResult filesystem_create_root_directory_locked(
 
         if (logical_block >= 12)
         {
-            return CREATE_DIRECTORY_ROOT_FULL;
+            return CREATE_DIRECTORY_FULL;
         }
         ext2_write_directory_record(
             block, 0, inode_number, EXT2_BLOCK_SIZE,
@@ -2456,26 +2538,26 @@ static enum CreateDirectoryResult filesystem_create_root_directory_locked(
             return CREATE_DIRECTORY_IO_ERROR;
         }
 
-        root_inode.block_pointers[logical_block * 4] =
+        parent_inode.block_pointers[logical_block * 4] =
             (unsigned char)root_block_number;
-        root_inode.block_pointers[logical_block * 4 + 1] =
+        parent_inode.block_pointers[logical_block * 4 + 1] =
             (unsigned char)(root_block_number >> 8);
-        root_inode.block_pointers[logical_block * 4 + 2] =
+        parent_inode.block_pointers[logical_block * 4 + 2] =
             (unsigned char)(root_block_number >> 16);
-        root_inode.block_pointers[logical_block * 4 + 3] =
+        parent_inode.block_pointers[logical_block * 4 + 3] =
             (unsigned char)(root_block_number >> 24);
-        root_inode.size += EXT2_BLOCK_SIZE;
-        root_inode.sectors += EXT2_BLOCK_SIZE / SECTOR_SIZE;
+        parent_inode.size += EXT2_BLOCK_SIZE;
+        parent_inode.sectors += EXT2_BLOCK_SIZE / SECTOR_SIZE;
     }
-    else if (!ext2_add_root_directory_entry(
-        &filesystem, &root_inode, &slot, inode_number,
+    else if (!ext2_add_directory_entry(
+        &filesystem, &parent_inode, &slot, inode_number,
         name, name_length))
     {
         return CREATE_DIRECTORY_IO_ERROR;
     }
 
-    ++root_inode.links;
-    if (!ext2_write_inode(&filesystem, &root_inode))
+    ++parent_inode.links;
+    if (!ext2_write_inode(&filesystem, &parent_inode))
     {
         return CREATE_DIRECTORY_IO_ERROR;
     }
@@ -2483,12 +2565,11 @@ static enum CreateDirectoryResult filesystem_create_root_directory_locked(
     return CREATE_DIRECTORY_OK;
 }
 
-enum CreateDirectoryResult filesystem_create_root_directory(
-    const char *name)
+enum CreateDirectoryResult filesystem_create_directory(const char *path)
 {
     unsigned int flags = filesystem_disable_interrupts();
     enum CreateDirectoryResult result =
-        filesystem_create_root_directory_locked(name);
+        filesystem_create_directory_locked(path);
 
     filesystem_restore_interrupts(flags);
     return result;

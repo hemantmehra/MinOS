@@ -8,7 +8,7 @@ enum CreateDirectoryResult
     CREATE_DIRECTORY_OK,
     CREATE_DIRECTORY_INVALID_NAME,
     CREATE_DIRECTORY_EXISTS,
-    CREATE_DIRECTORY_ROOT_FULL,
+    CREATE_DIRECTORY_FULL,
     CREATE_DIRECTORY_DISK_FULL,
     CREATE_DIRECTORY_IO_ERROR,
     CREATE_DIRECTORY_FILESYSTEM_ERROR
@@ -152,7 +152,6 @@ enum FileReadResult filesystem_read_root_file(
     unsigned char *buffer,
     unsigned int buffer_size,
     unsigned int *file_size);
-enum CreateDirectoryResult filesystem_create_root_directory(
-    const char *name);
+enum CreateDirectoryResult filesystem_create_directory(const char *path);
 
 #endif

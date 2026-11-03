@@ -57,7 +57,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `4` | Write the current UTC date and time | No arguments |
 | `5` | Report free memory and test a page mapping | No arguments |
 | `6` | List active processes and threads | No arguments |
-| `7` | Create a root directory | Uses the command-line arguments saved when the program started |
+| `7` | Create a directory | Uses the command-line path saved when the program started |
 | `8` | Clear the terminal | No arguments |
 | `9` | Initialize graphics output with a white framebuffer | No arguments |
 | `10` | Restore the terminal display | No arguments |
@@ -75,7 +75,9 @@ break scancodes have bit 7 set, and the Escape make scancode is `1`.
 Unsupported calls or invalid print requests terminate the calling process.
 Directory paths support absolute and current-directory-relative paths,
 including `.` and `..`; symbolic links are not supported. The current directory
-is shared by shell-launched programs. The kernel writes each entry name as
+is shared by shell-launched programs. `/data` is a visible mount point for the
+secondary ext2 disk; changing directory and creating directories beneath it
+operate on that disk. The kernel writes each entry name as
 integer character values into the caller's validated stack buffer. Open streams
 are released automatically when their owning process exits. Directory
 traversal, hidden-name filtering, and listing output are implemented in High;

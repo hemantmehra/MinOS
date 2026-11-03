@@ -124,8 +124,9 @@ Supported shell commands:
   next program's standard input. For example, `ls | wc` counts visible
   directory entries. Only one pipe is supported, and its in-memory buffer is
   limited to 16 KiB.
-- `mkdir <name>` runs `MKDIR.EXE` to create a root directory. Names may contain
-  1-8 letters, digits, underscores, or hyphens.
+- `mkdir <path>` runs `MKDIR.EXE` to create a directory in the current or
+  specified path, including `/data/<name>` on the secondary disk. The final
+  name must contain 1-8 letters, digits, underscores, or hyphens.
 - `clear` runs `CLEAR.EXE` to clear the screen.
 - `draw` runs `DRAW.EXE`, which draws a red circle on white in High and uses
   primitive graphics start/end services. Press Escape to return to the shell.

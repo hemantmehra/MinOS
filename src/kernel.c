@@ -263,7 +263,7 @@ static void shell_make_directory(const char *arguments)
         return;
     }
 
-    result = filesystem_create_root_directory(name);
+    result = filesystem_create_directory(name);
     switch (result)
     {
     case CREATE_DIRECTORY_OK:
@@ -277,8 +277,8 @@ static void shell_make_directory(const char *arguments)
     case CREATE_DIRECTORY_EXISTS:
         terminal_write("mkdir: directory already exists.\n");
         break;
-    case CREATE_DIRECTORY_ROOT_FULL:
-        terminal_write("mkdir: root directory is full.\n");
+    case CREATE_DIRECTORY_FULL:
+        terminal_write("mkdir: directory is full.\n");
         break;
     case CREATE_DIRECTORY_DISK_FULL:
         terminal_write("mkdir: ext2 filesystem has no free space.\n");
