@@ -80,7 +80,7 @@ def run_msvc(developer_command):
         "shell_utils.c",
         "basic.c",
     )
-    source_paths = " ".join(f'"{ROOT / source}"' for source in sources)
+    source_paths = " ".join(f'"{ROOT / "src" / source}"' for source in sources)
     object_files = " ".join(f"{Path(source).stem}.obj" for source in sources)
     compile_command = (
         f'call "{developer_command}" -arch=x86 -host_arch=x64 >nul && '
@@ -109,7 +109,14 @@ def main():
 
     boot_sector = BUILD_DIRECTORY / "boot.bin"
     result = subprocess.run(
-        [str(nasm), "-f", "bin", "-o", str(boot_sector), str(ROOT / "boot.asm")],
+        [
+            str(nasm),
+            "-f",
+            "bin",
+            "-o",
+            str(boot_sector),
+            str(ROOT / "src" / "boot.asm"),
+        ],
         check=False,
     )
     if result.returncode != 0:
@@ -123,7 +130,7 @@ def main():
             "bin",
             "-o",
             str(executable),
-            str(ROOT / "programs" / "hello.asm"),
+            str(ROOT / "src" / "programs" / "hello.asm"),
         ],
         check=False,
     )
@@ -138,7 +145,7 @@ def main():
             "bin",
             "-o",
             str(countdown_executable),
-            str(ROOT / "programs" / "countdown.asm"),
+            str(ROOT / "src" / "programs" / "countdown.asm"),
         ],
         check=False,
     )
@@ -153,7 +160,7 @@ def main():
             "bin",
             "-o",
             str(paint_executable),
-            str(ROOT / "programs" / "paint.asm"),
+            str(ROOT / "src" / "programs" / "paint.asm"),
         ],
         check=False,
     )

@@ -31,20 +31,22 @@ framebuffer with a 16-color palette, rendering the shell with bitmap
 characters and a blue `minios>` prompt. The disk image contains an ext2 filesystem populated with project files and
 directories. The kernel supports listing and root-level directory creation.
 
-Kernel code is organized by subsystem: `kernel.c` handles shell dispatch,
-`video.c` renders the VGA terminal, `keyboard.c` reads keyboard input,
-`filesystem.c` implements ext2 access, `basic.c` contains the BASIC
-interpreter, `interrupts.c` sets up the IDT and keyboard IRQ, `time.c` reads
-the CMOS real-time clock, `memory.c` initializes x86 paging and manages 4 KiB
-physical pages, and `shell_utils.c` provides shared shell helpers. Paging
-identity-maps the first 16 MiB and provides APIs to allocate/free physical
-pages and map, unmap, and translate virtual addresses. CPU exceptions halt
-safely, keyboard input is delivered through IRQ1, and the PIT timer drives
-the round-robin scheduler in `process.c`. The shell and each loaded process
-run as one schedulable thread. The scheduler saves and restores complete
-general-register, segment-register, and interrupt contexts, and programs use
-`int 0x80` to print or exit. Kernel and sample programs are built for IA-32
-integer code without SIMD or floating-point state.
+All operating-system source code is under `src\`. Kernel code is organized by
+subsystem: `src\kernel.c` handles shell dispatch, `src\video.c` renders the
+VGA terminal, `src\keyboard.c` reads keyboard input, `src\filesystem.c`
+implements ext2 access, `src\basic.c` contains the BASIC interpreter,
+`src\interrupts.c` sets up the IDT and keyboard IRQ, `src\time.c` reads the
+CMOS real-time clock, `src\memory.c` initializes x86 paging and manages 4 KiB
+physical pages, and `src\shell_utils.c` provides shared shell helpers. The
+boot sector is `src\boot.asm`; bundled program sources are in
+`src\programs\`. Paging identity-maps the first 16 MiB and provides APIs to
+allocate/free physical pages and map, unmap, and translate virtual addresses.
+CPU exceptions halt safely, keyboard input is delivered through IRQ1, and the
+PIT timer drives the round-robin scheduler in `src\process.c`. The shell and
+each loaded process run as one schedulable thread. The scheduler saves and
+restores complete general-register, segment-register, and interrupt contexts,
+and programs use `int 0x80` to print or exit. Kernel and sample programs are
+built for IA-32 integer code without SIMD or floating-point state.
 
 Processes currently run in ring 0 and share the kernel address space; they
 are preemptively scheduled but are not privilege-isolated. Root-directory
@@ -53,14 +55,13 @@ image size, and 32-bit entry offset) followed by flat 32-bit x86 code. The
 kernel loads images up to 64 KiB from the ext2 root directory. The ext2
 filesystem uses 1 KiB blocks and is stored directly after the boot sector and
 kernel, without an MBR partition table. The kernel supports root-directory
-listing and directory creation with `mkdir`. `programs/hello.asm` is assembled
-as `HELLO.EXE` during the
-build and included in the image. Shared
-interfaces are declared in `kernel.h`. The print call uses `EAX=1` and a
+listing and directory creation with `mkdir`. `src\programs\hello.asm` is
+assembled as `HELLO.EXE` during the build and included in the image. Shared
+interfaces are declared in `src\kernel.h`. The print call uses `EAX=1` and a
 null-terminated string pointer in `EBX`; `EAX=0` exits the process.
-`programs/countdown.asm` is assembled as `COUNTDOWN.EXE`; execute it to print
+`src\programs\countdown.asm` is assembled as `COUNTDOWN.EXE`; execute it to print
 the numbers 10 through 1.
-`programs/paint.asm` is assembled as `PAINT.EXE`; execute `PAINT.EXE` to draw
+`src\programs\paint.asm` is assembled as `PAINT.EXE`; execute `PAINT.EXE` to draw
 a red circle, green triangle, and blue rectangle. Press Escape to exit and
 restore the shell display. Applications can poll keyboard scancodes with
 `EAX=2` (returns a scancode in `EAX`, or zero when no key is available).
