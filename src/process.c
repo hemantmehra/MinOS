@@ -10,6 +10,7 @@
 #define PROCESS_BASE 0x40000000
 #define PROCESS_SYSCALL_PRINT 1
 #define PROCESS_SYSCALL_KEYBOARD_READ 2
+#define PROCESS_SYSCALL_LIST_ROOT 3
 #define PROCESS_SYSCALL_EXIT 0
 #define PROCESS_KEYBOARD_QUEUE_SIZE 16
 #define PROCESS_KEYBOARD_QUEUE_MASK (PROCESS_KEYBOARD_QUEUE_SIZE - 1)
@@ -519,6 +520,11 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         {
             saved_stack[11] = 0;
         }
+    }
+    else if (syscall_number == PROCESS_SYSCALL_LIST_ROOT)
+    {
+        filesystem_list_root();
+        saved_stack[11] = 0;
     }
     else if (syscall_number == PROCESS_SYSCALL_EXIT)
     {

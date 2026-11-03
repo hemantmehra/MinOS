@@ -53,6 +53,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `0` | Exit the process | No arguments |
 | `1` | Print a string | `EBX` points to a null-terminated string inside the executable image |
 | `2` | Read a keyboard event | Returns a make scancode in `EAX`, or `0` if no event is queued |
+| `3` | List the ext2 root directory | No arguments |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;

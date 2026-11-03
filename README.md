@@ -97,7 +97,8 @@ Supported shell commands:
   direction. Press Escape to return to the shell.
 - Enter `PAINT.EXE` to run the included drawing program. Press Escape to
   return to the shell.
-- `ls` lists files in the current root directory.
+- `ls` runs `LS.EXE`, a High-language program that lists the root directory
+  using the same output format as the shell's former built-in.
 - `mkdir <name>` creates a root directory. Names may contain 1-8 letters,
   digits, underscores, or hyphens.
 - `clear` clears the screen.

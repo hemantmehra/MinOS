@@ -18,6 +18,7 @@ BUILTINS = {
     "clear": (1, "statement"),
     "equals": (2, "expression"),
     "key": (0, "expression"),
+    "list_root": (0, "statement"),
     "parse_int": (2, "expression"),
     "pixel": (3, "statement"),
     "print": (1, "statement"),
@@ -544,6 +545,11 @@ class CodeGenerator:
             self._push_arguments(arguments)
             self._line(f"    call __high_{name}")
             self._discard_arguments(expected)
+            return
+        if name == "list_root":
+            self._check_arity(expression, 0)
+            self._line("    mov eax, 3")
+            self._line("    int 0x80")
             return
         if name in BUILTINS:
             self._error(

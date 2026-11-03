@@ -118,10 +118,6 @@ static void run_command(
             "BASIC: enter numbered lines; RUN, LIST, NEW, or EXIT.\n");
         basic_repl(shift_pressed, caps_lock, extended);
     }
-    else if (command_equals(command, "ls"))
-    {
-        filesystem_list_root();
-    }
     else if (command_equals(command, "ps"))
     {
         process_list();
