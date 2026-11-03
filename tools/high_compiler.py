@@ -16,11 +16,11 @@ TOKEN_PATTERN = re.compile(
 
 BUILTINS = {
     "clear": (1, "statement"),
+    "closedir": (1, "statement"),
     "clock": (0, "statement"),
     "end_graphics_mode": (0, "statement"),
     "equals": (2, "expression"),
     "key": (0, "expression"),
-    "list_root": (0, "statement"),
     "make_directory": (0, "statement"),
     "memory_report": (0, "statement"),
     "parse_int": (2, "expression"),
@@ -29,6 +29,8 @@ BUILTINS = {
     "print_char": (1, "statement"),
     "print_num": (1, "statement"),
     "process_list": (0, "statement"),
+    "opendir": (1, "expression"),
+    "read_dir": (2, "expression"),
     "random": (1, "expression"),
     "read_number": (2, "expression"),
     "read_line": (2, "expression"),
@@ -39,7 +41,6 @@ BUILTINS = {
 }
 
 SYSTEM_SERVICES = {
-    "list_root": 3,
     "clock": 4,
     "memory_report": 5,
     "process_list": 6,
@@ -48,6 +49,12 @@ SYSTEM_SERVICES = {
     "start_graphics_mode": 9,
     "end_graphics_mode": 10,
     "write_character": 11,
+}
+
+DIRECTORY_SERVICES = {
+    "opendir": 12,
+    "closedir": 13,
+    "read_dir": 14,
 }
 
 PRECEDENCE = {
@@ -574,6 +581,14 @@ class CodeGenerator:
             )
             self._line("    int 0x80")
             return
+        if name == "closedir":
+            self._check_arity(expression, 1)
+            self._check_integer_arguments(expression)
+            self._generate_expression(arguments[0])
+            self._line("    mov ebx, eax")
+            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line("    int 0x80")
+            return
         if name in ("clear", "pixel"):
             expected = 1 if name == "clear" else 3
             self._check_arity(expression, expected)
@@ -746,6 +761,42 @@ class CodeGenerator:
             self._push_arguments(arguments)
             self._line("    call __high_random")
             self._discard_arguments(1)
+        elif name == "opendir":
+            self._check_arity(expression, 1)
+            self._check_string_argument(expression, 0)
+            label = self._intern_string(arguments[0]["value"])
+            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line(f"    lea ebx, [edi + {label} - image_start]")
+            self._line("    int 0x80")
+        elif name == "read_dir":
+            self._check_arity(expression, 2)
+            self._check_integer_arguments(expression)
+            buffer_expression = arguments[1]
+            if buffer_expression["kind"] != "variable":
+                self._error_from_expression(
+                    buffer_expression,
+                    "read_dir expects a local array for its name buffer",
+                )
+            buffer_name = buffer_expression["name"]
+            buffer_size = self.array_sizes.get(buffer_name)
+            if buffer_size is None:
+                self._error_from_expression(
+                    buffer_expression,
+                    f"unknown array {buffer_name!r}",
+                )
+            if buffer_size < 256:
+                self._error_from_expression(
+                    buffer_expression,
+                    "read_dir name buffer must contain at least 256 elements",
+                )
+            self._generate_expression(arguments[0])
+            self._line("    mov ebx, eax")
+            self._line(
+                f"    lea ecx, [ebp{self.array_offsets[buffer_name]:+d}]"
+            )
+            self._line("    mov edx, 256")
+            self._line(f"    mov eax, {DIRECTORY_SERVICES[name]}")
+            self._line("    int 0x80")
         elif name in BUILTINS:
             self._error(
                 expression["token"],

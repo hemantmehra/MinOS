@@ -19,6 +19,7 @@
 #define EXT2_DIRECTORY_ENTRY_HEADER_SIZE 8
 #define EXT2_INODE_FIRST_NONRESERVED 11
 #define EXT2_POINTERS_PER_BLOCK (EXT2_BLOCK_SIZE / 4)
+#define EXT2_DIRECTORY_STREAM_LIMIT 8
 #define ATA_DATA_PORT 0x1F0
 #define ATA_SECTOR_COUNT_PORT 0x1F2
 #define ATA_LBA_LOW_PORT 0x1F3
@@ -76,6 +77,15 @@ typedef struct
     unsigned int record_length;
 } Ext2DirectoryEntry;
 
+typedef struct
+{
+    unsigned int owner;
+    int active;
+    Ext2FileSystem filesystem;
+    Ext2Inode inode;
+    Ext2DirectoryIterator iterator;
+} Ext2DirectoryStream;
+
 enum FileSystemError
 {
     FILESYSTEM_OK,
@@ -83,6 +93,8 @@ enum FileSystemError
     FILESYSTEM_INVALID_SUPERBLOCK,
     FILESYSTEM_UNSUPPORTED_FEATURE
 };
+
+static Ext2DirectoryStream directory_streams[EXT2_DIRECTORY_STREAM_LIMIT];
 
 static void ata_delay_400ns(void)
 {
@@ -1154,108 +1166,126 @@ static int ext2_make_executable_name(
     return 1;
 }
 
-void filesystem_list_root(void)
+int filesystem_open_directory(unsigned int owner, const char *path)
 {
-    Ext2FileSystem filesystem;
-    Ext2Inode root_inode;
-    Ext2DirectoryIterator iterator;
-    Ext2DirectoryEntry entry;
+    unsigned int index;
     enum FileSystemError mount_result;
-    unsigned int entries_seen = 0;
-    int result;
+    Ext2DirectoryStream *stream = 0;
 
-    mount_result = filesystem_mount(&filesystem);
-    if (mount_result == FILESYSTEM_DISK_READ_ERROR)
+    if (path == 0 ||
+        !((path[0] == '/' && path[1] == '\0') ||
+            (path[0] == '.' && path[1] == '\0')))
     {
-        terminal_write("ls: could not read the ext2 filesystem from disk.\n");
-        return;
+        return -1;
     }
-    if (mount_result == FILESYSTEM_UNSUPPORTED_FEATURE)
+
+    for (index = 0; index < EXT2_DIRECTORY_STREAM_LIMIT; ++index)
     {
-        terminal_write("ls: ext2 filesystem uses unsupported features.\n");
-        return;
+        if (!directory_streams[index].active)
+        {
+            stream = &directory_streams[index];
+            break;
+        }
     }
+    if (stream == 0)
+    {
+        return -1;
+    }
+
+    mount_result = filesystem_mount(&stream->filesystem);
     if (mount_result != FILESYSTEM_OK ||
-        !ext2_read_inode(&filesystem, EXT2_ROOT_INODE, &root_inode) ||
-        (ext2_inode_mode(&root_inode) & EXT2_S_IFMT) != EXT2_S_IFDIR)
+        !ext2_read_inode(
+            &stream->filesystem, EXT2_ROOT_INODE, &stream->inode) ||
+        (ext2_inode_mode(&stream->inode) & EXT2_S_IFMT) != EXT2_S_IFDIR)
     {
-        terminal_write("ls: filesystem has an invalid ext2 structure.\n");
-        return;
+        return -1;
     }
 
-    iterator.byte_offset = 0;
-    iterator.loaded_block = 0xFFFFFFFF;
-    while ((result = ext2_directory_next(
-        &filesystem, &root_inode, &iterator, &entry)) > 0)
-    {
-        unsigned int index;
-        unsigned int mode = 0;
+    stream->owner = owner;
+    stream->iterator.byte_offset = 0;
+    stream->iterator.loaded_block = 0xFFFFFFFF;
+    stream->active = 1;
+    return (int)(index + 1);
+}
 
-        if (entry.inode == 0 ||
-            (entry.name_length == 1 && entry.name[0] == '.') ||
-            (entry.name_length == 2 &&
-                entry.name[0] == '.' && entry.name[1] == '.'))
+int filesystem_read_directory(
+    unsigned int owner,
+    unsigned int stream_handle,
+    unsigned int *name,
+    unsigned int capacity)
+{
+    Ext2DirectoryStream *stream;
+    Ext2DirectoryEntry entry;
+    int result;
+    unsigned int index;
+
+    if (stream_handle == 0 ||
+        stream_handle > EXT2_DIRECTORY_STREAM_LIMIT ||
+        name == 0 || capacity == 0)
+    {
+        return -1;
+    }
+
+    stream = &directory_streams[stream_handle - 1];
+    if (!stream->active || stream->owner != owner)
+    {
+        return -1;
+    }
+
+    while ((result = ext2_directory_next(
+        &stream->filesystem, &stream->inode, &stream->iterator, &entry)) > 0)
+    {
+        if (entry.inode == 0)
         {
             continue;
         }
-
-        if (entry.file_type == 2)
+        if (entry.name_length >= capacity)
         {
-            mode = EXT2_S_IFDIR;
-        }
-        else if (entry.file_type == 1)
-        {
-            mode = EXT2_S_IFREG;
-        }
-        else
-        {
-            Ext2Inode child_inode;
-
-            if (!ext2_read_inode(&filesystem, entry.inode, &child_inode))
-            {
-                terminal_write("ls: could not read a directory entry inode.\n");
-                return;
-            }
-            mode = ext2_inode_mode(&child_inode) & EXT2_S_IFMT;
+            return -1;
         }
 
-        if (mode == EXT2_S_IFDIR)
+        for (index = 0; index < entry.name_length; ++index)
         {
-            terminal_write("[DIR]  ");
-            for (index = 0; index < entry.name_length; ++index)
-            {
-                terminal_write_character(entry.name[index]);
-            }
-            terminal_write("\n");
+            name[index] = (unsigned char)entry.name[index];
         }
-        else if (mode == EXT2_S_IFREG)
-        {
-            Ext2Inode child_inode;
-
-            if (!ext2_read_inode(&filesystem, entry.inode, &child_inode))
-            {
-                terminal_write("ls: could not read a file inode.\n");
-                return;
-            }
-            for (index = 0; index < entry.name_length; ++index)
-            {
-                terminal_write_character(entry.name[index]);
-            }
-            terminal_write("  ");
-            terminal_write_unsigned(child_inode.size);
-            terminal_write(" bytes\n");
-        }
-
-        ++entries_seen;
+        name[entry.name_length] = 0;
+        return 1;
     }
 
-    if (result < 0)
+    return result < 0 ? -1 : 0;
+}
+
+int filesystem_close_directory(unsigned int owner, unsigned int stream_handle)
+{
+    Ext2DirectoryStream *stream;
+
+    if (stream_handle == 0 ||
+        stream_handle > EXT2_DIRECTORY_STREAM_LIMIT)
     {
-        terminal_write("ls: ext2 root directory is corrupt or unreadable.\n");
+        return -1;
     }
-    else if (entries_seen == 0)
+
+    stream = &directory_streams[stream_handle - 1];
+    if (!stream->active || stream->owner != owner)
     {
-        terminal_write("(empty)\n");
+        return -1;
+    }
+
+    stream->active = 0;
+    return 0;
+}
+
+void filesystem_close_process_directories(unsigned int owner)
+{
+    unsigned int index;
+
+    for (index = 0; index < EXT2_DIRECTORY_STREAM_LIMIT; ++index)
+    {
+        if (directory_streams[index].active &&
+            directory_streams[index].owner == owner)
+        {
+            directory_streams[index].active = 0;
+        }
     }
 }
 

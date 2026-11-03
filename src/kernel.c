@@ -209,9 +209,6 @@ void shell_run_service(unsigned int service, const char *arguments)
 {
     switch (service)
     {
-    case PROCESS_SERVICE_LIST_ROOT:
-        filesystem_list_root();
-        break;
     case PROCESS_SERVICE_CLOCK:
         clock_write_time();
         break;

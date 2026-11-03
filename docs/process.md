@@ -53,7 +53,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `0` | Exit the process | No arguments |
 | `1` | Print a string | `EBX` points to a null-terminated string inside the executable image |
 | `2` | Read a keyboard event | Returns a make or break scancode in `EAX`, or `0` if no event is queued |
-| `3` | List the ext2 root directory | No arguments |
+| `3` | Reserved | — |
 | `4` | Write the current UTC date and time | No arguments |
 | `5` | Report free memory and test a page mapping | No arguments |
 | `6` | List active processes and threads | No arguments |
@@ -62,14 +62,22 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `9` | Initialize graphics output with a white framebuffer | No arguments |
 | `10` | Restore the terminal display | No arguments |
 | `11` | Write one character | Character in `EBX` |
+| `12` | Open a directory stream | `EBX` points to a null-terminated path in the executable image; returns a handle or `-1` |
+| `13` | Close a directory stream | Stream handle in `EBX` |
+| `14` | Read a directory entry | Handle in `EBX`, writable integer array in `ECX`, capacity in `EDX`; returns `1` for an entry, `0` at end, or `-1` on error |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;
 break scancodes have bit 7 set, and the Escape make scancode is `1`.
 Unsupported calls or invalid print requests terminate the calling process.
-Drawing, terminal input, and BASIC parsing and interpretation are implemented
-in High; kernel services expose only graphics setup/restore and character
-output for those operations.
+Directory streams currently support the ext2 root directory (`/` or `.`). The
+kernel writes each entry name as integer character values into the caller's
+validated stack buffer. Open streams are released automatically when their
+owning process exits. Directory traversal, hidden-name filtering, and listing
+output are implemented in High; the services only open, read, and close streams.
+Drawing, terminal input, and BASIC parsing and interpretation are also
+implemented in High; kernel services expose only graphics setup/restore and
+character output for those operations.
 
 ## Exiting a process
 

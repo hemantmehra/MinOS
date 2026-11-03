@@ -40,15 +40,17 @@ enum ProcessStartResult
 
 enum ProcessService
 {
-    PROCESS_SERVICE_LIST_ROOT = 3,
-    PROCESS_SERVICE_CLOCK,
+    PROCESS_SERVICE_CLOCK = 4,
     PROCESS_SERVICE_MEMORY_REPORT,
     PROCESS_SERVICE_LIST_PROCESSES,
     PROCESS_SERVICE_MAKE_DIRECTORY,
     PROCESS_SERVICE_TERMINAL_CLEAR,
     PROCESS_SERVICE_START_GRAPHICS,
     PROCESS_SERVICE_END_GRAPHICS,
-    PROCESS_SERVICE_WRITE_CHARACTER
+    PROCESS_SERVICE_WRITE_CHARACTER,
+    PROCESS_SERVICE_OPENDIR,
+    PROCESS_SERVICE_CLOSEDIR,
+    PROCESS_SERVICE_READ_DIR
 };
 
 void terminal_write_character(char character);
@@ -107,7 +109,14 @@ char keyboard_decode_scancode(
     unsigned char *caps_lock,
     unsigned char *extended);
 
-void filesystem_list_root(void);
+int filesystem_open_directory(unsigned int owner, const char *path);
+int filesystem_read_directory(
+    unsigned int owner,
+    unsigned int stream,
+    unsigned int *name,
+    unsigned int capacity);
+int filesystem_close_directory(unsigned int owner, unsigned int stream);
+void filesystem_close_process_directories(unsigned int owner);
 enum FileReadResult filesystem_read_root_file(
     const char *name,
     unsigned char *buffer,

@@ -1,3 +1,31 @@
 fn main() {
-    list_root();
+    array name[256];
+    let directory = opendir("/");
+    let result = 0;
+    let index = 0;
+
+    if (directory < 0) {
+        print("myls error\n");
+        return;
+    }
+
+    result = read_dir(directory, name);
+    while (result > 0) {
+        if (name[0] != 46) {
+            index = 0;
+            while (name[index] != 0) {
+                print_char(name[index]);
+                index = index + 1;
+            }
+            print("  ");
+        }
+        result = read_dir(directory, name);
+    }
+
+    closedir(directory);
+    if (result < 0) {
+        print("myls error\n");
+    } else {
+        print("\n");
+    }
 }

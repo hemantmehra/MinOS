@@ -221,6 +221,8 @@ static void process_terminate_current(void)
     if (current_task != 0 &&
         processes[current_task].state == TASK_ACTIVE)
     {
+        filesystem_close_process_directories(
+            processes[current_task].process_id);
         processes[current_task].state = TASK_DYING;
         current_task = find_next_active_task();
     }
@@ -249,6 +251,44 @@ static int process_print_string(
         }
     }
     return 0;
+}
+
+static int process_string_is_valid(
+    const Process *process,
+    unsigned int address)
+{
+    unsigned int end = process->code_base + process->code_size;
+
+    if (address < process->code_base || address >= end)
+    {
+        return 0;
+    }
+
+    while (address < end)
+    {
+        if (*(const char *)address == '\0')
+        {
+            return 1;
+        }
+        ++address;
+    }
+    return 0;
+}
+
+static int process_stack_buffer_is_valid(
+    const Process *process,
+    unsigned int address,
+    unsigned int byte_count)
+{
+    unsigned int stack_start =
+        process->code_base + PROCESS_SLOT_SIZE -
+        PROCESS_STACK_PAGE_COUNT * 4096;
+    unsigned int stack_end = process->code_base + PROCESS_SLOT_SIZE;
+
+    return byte_count != 0 &&
+        address >= stack_start &&
+        address < stack_end &&
+        byte_count <= stack_end - address;
 }
 
 void processes_initialize(void)
@@ -556,7 +596,52 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             break;
         }
     }
-    else if (syscall_number >= PROCESS_SERVICE_LIST_ROOT &&
+    else if (syscall_number == PROCESS_SERVICE_OPENDIR)
+    {
+        if (process_string_is_valid(process, saved_stack[8]))
+        {
+            saved_stack[11] = (unsigned int)filesystem_open_directory(
+                process->process_id, (const char *)saved_stack[8]);
+        }
+        else
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_CLOSEDIR)
+    {
+        saved_stack[11] = (unsigned int)filesystem_close_directory(
+            process->process_id, saved_stack[8]);
+    }
+    else if (syscall_number == PROCESS_SERVICE_READ_DIR)
+    {
+        unsigned int capacity = saved_stack[9];
+        unsigned int buffer_size;
+
+        if (capacity > 256 ||
+            capacity > 0xFFFFFFFF / sizeof(unsigned int))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            buffer_size = capacity * sizeof(unsigned int);
+            if (!process_stack_buffer_is_valid(
+                process, saved_stack[10], buffer_size))
+            {
+                saved_stack[11] = (unsigned int)-1;
+            }
+            else
+            {
+                saved_stack[11] = (unsigned int)filesystem_read_directory(
+                    process->process_id,
+                    saved_stack[8],
+                    (unsigned int *)saved_stack[10],
+                    capacity);
+            }
+        }
+    }
+    else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
         syscall_number <= PROCESS_SERVICE_WRITE_CHARACTER)
     {
         if (syscall_number == PROCESS_SERVICE_WRITE_CHARACTER)
