@@ -1,0 +1,4 @@
+fn main() {
+    print("P2: running\n");
+    print("P2: exiting\n");
+}

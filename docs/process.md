@@ -80,6 +80,8 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `27` | Clear the graphics framebuffer | Palette color in `EBX` |
 | `28` | Draw one framebuffer pixel | `EBX` = x, `EDX` = y, `ECX` = palette color |
 | `29` | Present the back buffer | No arguments |
+| `30` | Create a child process | `EBX` points to a null-terminated executable name in the caller's image; returns the child PID or `-1` |
+| `31` | Wait for a child process | Child PID in `EBX`; blocks until it exits and returns `1`, or returns `0` if it is not a child |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;

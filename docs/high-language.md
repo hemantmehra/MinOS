@@ -119,6 +119,10 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   command-line process name (case-insensitive, with an optional `.exe` suffix)
   and returns `1` when it succeeds, `0` when no process matches, or `-1` for
   an empty name.
+- `create_process("PROGRAM.EXE")` starts a root-directory executable as a child
+  and returns its process ID, or `-1` if it cannot be started.
+- `wait_process(pid)` blocks until the calling process's child exits, returning
+  `1` when the child completes or `0` when the PID is not its child.
 - `clock();`, `memory_report();`, and `process_list();` show the current time,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments

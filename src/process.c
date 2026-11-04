@@ -25,7 +25,9 @@ enum TaskState
     TASK_UNUSED,
     TASK_LOADING,
     TASK_ACTIVE,
+    TASK_WAITING,
     TASK_DYING,
+    TASK_EXITED,
     TASK_CLEANUP_ERROR
 };
 
@@ -52,6 +54,8 @@ typedef struct
 {
     enum TaskState state;
     unsigned int process_id;
+    unsigned int parent_process_id;
+    unsigned int wait_process_id;
     unsigned int *saved_stack;
     unsigned int code_base;
     unsigned int code_size;
@@ -209,11 +213,51 @@ static void process_cleanup_terminated(void)
                     "process",
                     "cleaned up pid",
                     processes[slot].process_id);
-                processes[slot].state = TASK_UNUSED;
+                if (processes[slot].parent_process_id == 0)
+                {
+                    processes[slot].state = TASK_UNUSED;
+                }
+                else
+                {
+                    unsigned int waiter_slot;
+                    unsigned int child_id = processes[slot].process_id;
+                    unsigned int parent_id =
+                        processes[slot].parent_process_id;
+
+                    processes[slot].state = TASK_EXITED;
+                    for (waiter_slot = 1;
+                        waiter_slot < TASK_LIMIT;
+                        ++waiter_slot)
+                    {
+                        Process *waiter = &processes[waiter_slot];
+
+                        if (waiter->state == TASK_WAITING &&
+                            waiter->process_id == parent_id &&
+                            waiter->wait_process_id == child_id)
+                        {
+                            waiter->saved_stack[11] = 1;
+                            waiter->wait_process_id = 0;
+                            waiter->state = TASK_ACTIVE;
+                            processes[slot].parent_process_id = 0;
+                            processes[slot].state = TASK_UNUSED;
+                            kernel_log_value(
+                                KERNEL_LOG_INFO,
+                                "process",
+                                "wait completed for pid",
+                                child_id);
+                            break;
+                        }
+                    }
+                }
                 video_terminal_restore();
             }
             else
             {
+                unsigned int waiter_slot;
+                unsigned int child_id = processes[slot].process_id;
+                unsigned int parent_id =
+                    processes[slot].parent_process_id;
+
                 processes[slot].state = TASK_CLEANUP_ERROR;
                 kernel_log_value(
                     KERNEL_LOG_ERROR,
@@ -221,6 +265,22 @@ static void process_cleanup_terminated(void)
                     "memory cleanup failed for pid",
                     processes[slot].process_id);
                 terminal_write("process: failed to release task memory.\n");
+                for (waiter_slot = 1;
+                    waiter_slot < TASK_LIMIT;
+                    ++waiter_slot)
+                {
+                    Process *waiter = &processes[waiter_slot];
+
+                    if (waiter->state == TASK_WAITING &&
+                        waiter->process_id == parent_id &&
+                        waiter->wait_process_id == child_id)
+                    {
+                        waiter->saved_stack[11] = 0;
+                        waiter->wait_process_id = 0;
+                        waiter->state = TASK_ACTIVE;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -408,6 +468,8 @@ static void process_pipe_close_endpoint(const Process *process)
 
 static void process_terminate(Process *process)
 {
+    unsigned int slot;
+
     if (process->state != TASK_ACTIVE)
     {
         return;
@@ -421,6 +483,19 @@ static void process_terminate(Process *process)
     filesystem_close_process_directories(process->process_id);
     filesystem_close_process_files(process->process_id);
     process_pipe_close_endpoint(process);
+    for (slot = 1; slot < TASK_LIMIT; ++slot)
+    {
+        Process *child = &processes[slot];
+
+        if (child->parent_process_id == process->process_id)
+        {
+            child->parent_process_id = 0;
+            if (child->state == TASK_EXITED)
+            {
+                child->state = TASK_UNUSED;
+            }
+        }
+    }
     process->state = TASK_DYING;
 }
 
@@ -555,6 +630,8 @@ void processes_initialize(void)
     for (slot = 0; slot < TASK_LIMIT; ++slot)
     {
         processes[slot].state = TASK_UNUSED;
+        processes[slot].parent_process_id = 0;
+        processes[slot].wait_process_id = 0;
         processes[slot].saved_stack = 0;
         processes[slot].code_page_count = 0;
         processes[slot].stack_page_count = 0;
@@ -639,6 +716,8 @@ enum ProcessStartResult process_start(
     process->code_base = process_slot_base(slot);
     process->code_size = 0;
     process->entry_offset = 0;
+    process->parent_process_id = 0;
+    process->wait_process_id = 0;
     process->code_page_count = 0;
     process->stack_page_count = 0;
     process->keyboard_event_read = 0;
@@ -824,11 +903,6 @@ enum ProcessStartResult process_start(
     stack[14] = 0x202;
     process->saved_stack = stack;
     *process_id = pid;
-    terminal_write("Started ");
-    terminal_write(process->name);
-    terminal_write(" (PID ");
-    terminal_write_unsigned(pid);
-    terminal_write(")\n");
     process->state = TASK_ACTIVE;
     kernel_log_value(KERNEL_LOG_INFO, "process", "started pid", pid);
     restore_interrupts(flags);
@@ -1150,6 +1224,87 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         saved_stack[11] = (unsigned int)process_kill_by_name(
             process->process_id, process->arguments);
     }
+    else if (syscall_number == PROCESS_SERVICE_CREATE_PROCESS)
+    {
+        char filename[128];
+        unsigned int child_process_id;
+        unsigned int child_slot;
+        enum ProcessStartResult result;
+
+        if (!process_copy_user_path(process, saved_stack[8], filename))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            result = process_start(
+                filename,
+                "",
+                &child_process_id,
+                process->background);
+            if (result != PROCESS_START_OK)
+            {
+                kernel_log_value(
+                    KERNEL_LOG_WARNING,
+                    "process",
+                    "create process failed with result",
+                    (unsigned int)result);
+                saved_stack[11] = (unsigned int)-1;
+            }
+            else
+            {
+                saved_stack[11] = (unsigned int)-1;
+                for (child_slot = 1;
+                    child_slot < TASK_LIMIT;
+                    ++child_slot)
+                {
+                    Process *child = &processes[child_slot];
+
+                    if (child->state == TASK_ACTIVE &&
+                        child->process_id == child_process_id)
+                    {
+                        child->parent_process_id = process->process_id;
+                        saved_stack[11] = child_process_id;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_WAIT_PROCESS)
+    {
+        unsigned int child_process_id = saved_stack[8];
+        unsigned int child_slot;
+
+        saved_stack[11] = 0;
+        for (child_slot = 1; child_slot < TASK_LIMIT; ++child_slot)
+        {
+            Process *child = &processes[child_slot];
+
+            if (child->process_id != child_process_id ||
+                child->parent_process_id != process->process_id)
+            {
+                continue;
+            }
+
+            if (child->state == TASK_EXITED)
+            {
+                child->parent_process_id = 0;
+                child->state = TASK_UNUSED;
+                saved_stack[11] = 1;
+            }
+            else if (child->state == TASK_ACTIVE ||
+                child->state == TASK_WAITING ||
+                child->state == TASK_DYING)
+            {
+                process->wait_process_id = child_process_id;
+                saved_stack[11] = 0;
+                process->state = TASK_WAITING;
+                current_task = find_next_active_task();
+            }
+            break;
+        }
+    }
     else if (syscall_number == PROCESS_SERVICE_READ_STREAM)
     {
         unsigned int capacity = saved_stack[9];
@@ -1412,7 +1567,9 @@ int process_has_foreground_process(void)
 
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
-        if (processes[slot].state == TASK_ACTIVE &&
+        if ((processes[slot].state == TASK_ACTIVE ||
+                processes[slot].state == TASK_WAITING ||
+                processes[slot].state == TASK_DYING) &&
             !processes[slot].background)
         {
             return 1;
@@ -1579,8 +1736,14 @@ void process_list(void)
                 terminal_write(slot == current_task ? "RUNNING " : "READY   ");
             }
             break;
+        case TASK_WAITING:
+            terminal_write("WAITING ");
+            break;
         case TASK_DYING:
             terminal_write("EXITING ");
+            break;
+        case TASK_EXITED:
+            terminal_write("EXITED  ");
             break;
         default:
             terminal_write("ERROR   ");

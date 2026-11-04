@@ -19,6 +19,7 @@ BUILTINS = {
     "close_file": (1, "statement"),
     "closedir": (1, "statement"),
     "clock": (0, "statement"),
+    "create_process": (1, "expression"),
     "end_graphics_mode": (0, "statement"),
     "equals": (2, "expression"),
     "key": (0, "expression"),
@@ -83,6 +84,8 @@ PROCESS_SERVICES = {
     "clear_graphics": 27,
     "draw_pixel": 28,
     "present": 29,
+    "create_process": 30,
+    "wait_process": 31,
 }
 
 STANDARD_HANDLES = {
@@ -730,7 +733,23 @@ class CodeGenerator:
     def _generate_expression_call(self, expression):
         name = expression["name"]
         arguments = expression["arguments"]
-        if name == "kill_process":
+        if name == "create_process":
+            self._check_arity(expression, 1)
+            self._check_string_argument(expression, 0)
+            filename = self._intern_string(arguments[0]["value"])
+            self._line(
+                f"    lea ebx, [edi + {filename} - image_start]"
+            )
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
+            self._line("    int 0x80")
+        elif name == "wait_process":
+            self._check_arity(expression, 1)
+            self._check_integer_arguments(expression)
+            self._generate_expression(arguments[0])
+            self._line("    mov ebx, eax")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
+            self._line("    int 0x80")
+        elif name == "kill_process":
             self._check_arity(expression, 0)
             self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
