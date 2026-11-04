@@ -30,8 +30,9 @@ QEMU opens the kernel with a BIOS-backed PC. The kernel uses a 1280x720 VBE
 framebuffer with a 16-color palette, rendering the shell with bitmap
 characters and a blue `minios>` prompt. The system disk contains an ext2
 filesystem populated with project files and directories. A separate 8 MiB
-ext2 data disk is attached as the secondary IDE drive; its contents persist
-across normal builds and are available under `/data`.
+ext2 data disk is attached as the secondary IDE drive at
+`build\disks\data.img`; its contents persist across normal builds and are
+available under `/data`. The system disk image is `build\disks\system.img`.
 
 All operating-system source code is under `src\`. Kernel code is organized by
 subsystem: `src\kernel.c` handles shell dispatch, `src\video.c` renders the
@@ -116,8 +117,8 @@ Supported shell commands:
   `cat /data/SAMPLE.TXT` reads a test file and
   `write /data/WRITE.TXT <text>` replaces the writable test file's contents.
   Writes are limited to the file's preallocated ext2 capacity.
-- `python tools\read_disk.py` lists the root of `build\data.img`, or
-  `python tools\read_disk.py build\data.img /SAMPLE.TXT` reads a file after
+- `python tools\read_disk.py` lists the root of `build\disks\data.img`, or
+  `python tools\read_disk.py build\disks\data.img /SAMPLE.TXT` reads a file after
   MinOS is shut down. The script can inspect any supported ext2 image.
 - `wc` runs `WC.EXE` to count whitespace-separated words from pipeline input.
 - `program [args] | program [args]` pipes one program's printed output to the
@@ -135,7 +136,11 @@ Supported shell commands:
   `RUN`, `LIST`, `NEW`, `EXIT`, `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`,
   `END`, `STOP`, and integer expressions.
 
-The build writes its intermediate files and system disk image to `build\`.
+The build keeps boot, kernel, program, disk, and diagnostic outputs in
+`build\boot`, `build\kernel`, `build\programs`, `build\disks`, and
+`build\diagnostics`. Its cleanup removes only generated build products,
+preserves the data disk, and moves legacy diagnostic captures into the
+diagnostics folder.
 `python tools\make_data_disk.py` explicitly recreates the secondary ext2 disk
 from `tools\data_files\`; this resets its contents. MSVC
 links the kernel at a fixed 32-bit address; keep the loaded code small and

@@ -7,6 +7,73 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 BUILD_DIRECTORY = ROOT / "build"
+BOOT_DIRECTORY = BUILD_DIRECTORY / "boot"
+KERNEL_DIRECTORY = BUILD_DIRECTORY / "kernel"
+PROGRAMS_DIRECTORY = BUILD_DIRECTORY / "programs"
+DISKS_DIRECTORY = BUILD_DIRECTORY / "disks"
+DIAGNOSTICS_DIRECTORY = BUILD_DIRECTORY / "diagnostics"
+SYSTEM_IMAGE = DISKS_DIRECTORY / "system.img"
+DATA_IMAGE = DISKS_DIRECTORY / "data.img"
+
+
+def _move_legacy_file(source, destination):
+    if not source.exists():
+        return
+    if destination.exists():
+        raise RuntimeError(
+            f"Both legacy and organized build files exist: {source} and "
+            f"{destination}. Move or compare them before rebuilding."
+        )
+    shutil.move(str(source), str(destination))
+
+
+def prepare_build_directories():
+    for directory in (
+        BOOT_DIRECTORY,
+        KERNEL_DIRECTORY,
+        PROGRAMS_DIRECTORY,
+        DISKS_DIRECTORY,
+        DIAGNOSTICS_DIRECTORY,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    _move_legacy_file(BUILD_DIRECTORY / "data.img", DATA_IMAGE)
+
+    for name in ("boot.bin", "kernel.exe", "helloos.img"):
+        legacy_file = BUILD_DIRECTORY / name
+        if legacy_file.exists():
+            legacy_file.unlink()
+
+    for directory, suffixes in (
+        (BOOT_DIRECTORY, {".bin"}),
+        (KERNEL_DIRECTORY, {".obj", ".cod", ".exe", ".ilk", ".pdb"}),
+        (PROGRAMS_DIRECTORY, {".asm", ".exe"}),
+    ):
+        for path in directory.iterdir():
+            if path.is_file() and path.suffix.lower() in suffixes:
+                path.unlink()
+
+    if SYSTEM_IMAGE.exists():
+        SYSTEM_IMAGE.unlink()
+
+    legacy_diagnostics = (
+        path
+        for path in BUILD_DIRECTORY.iterdir()
+        if path.is_file()
+        and (
+            path.suffix.lower() in {".log", ".ppm", ".png"}
+            or path.stem.lower().endswith("-check")
+        )
+    )
+    for path in legacy_diagnostics:
+        _move_legacy_file(path, DIAGNOSTICS_DIRECTORY / path.name)
+
+    for path in BUILD_DIRECTORY.iterdir():
+        if path.is_file() and (
+            path.suffix.lower() in {".obj", ".exe", ".cod"}
+            or path.name.lower() in {"boot.bin", "helloos.img"}
+        ):
+            path.unlink()
 
 
 def find_nasm():
@@ -80,7 +147,9 @@ def run_msvc(developer_command):
         "shell_utils.c",
     )
     source_paths = " ".join(f'"{ROOT / "src" / source}"' for source in sources)
-    object_files = " ".join(f"{Path(source).stem}.obj" for source in sources)
+    object_files = " ".join(
+        f"{Path(source).stem}.obj" for source in sources
+    )
     compile_command = (
         f'call "{developer_command}" -arch=x86 -host_arch=x64 >nul && '
         f"cl /nologo /c /TC /GS- /Oi /O1 /Zl /arch:IA32 {source_paths} "
@@ -90,7 +159,7 @@ def run_msvc(developer_command):
         f"/incremental:no /out:kernel.exe {object_files}"
     )
     result = subprocess.run(
-        compile_command, cwd=BUILD_DIRECTORY, shell=True, check=False
+        compile_command, cwd=KERNEL_DIRECTORY, shell=True, check=False
     )
     if result.returncode != 0:
         raise RuntimeError("MSVC failed to compile or link the kernel.")
@@ -104,9 +173,10 @@ def main():
         raise RuntimeError("NASM was not found. Install NASM or add it to PATH.")
 
     developer_command = find_visual_studio()
+    prepare_build_directories()
     run_msvc(developer_command)
 
-    boot_sector = BUILD_DIRECTORY / "boot.bin"
+    boot_sector = BOOT_DIRECTORY / "boot.bin"
     result = subprocess.run(
         [
             str(nasm),
@@ -127,11 +197,9 @@ def main():
         raise RuntimeError("No .high program sources were found.")
 
     executables = []
-    generated_directory = BUILD_DIRECTORY / "programs"
-    generated_directory.mkdir(parents=True, exist_ok=True)
     for source in program_sources:
-        assembly = generated_directory / f"{source.stem}.asm"
-        executable = BUILD_DIRECTORY / f"{source.stem.upper()}.EXE"
+        assembly = PROGRAMS_DIRECTORY / f"{source.stem}.asm"
+        executable = PROGRAMS_DIRECTORY / f"{source.stem.upper()}.EXE"
         result = subprocess.run(
             [sys.executable, str(compiler), str(source), str(assembly)],
             check=False,
@@ -161,9 +229,9 @@ def main():
         "--boot",
         str(boot_sector),
         "--kernel",
-        str(BUILD_DIRECTORY / "kernel.exe"),
+        str(KERNEL_DIRECTORY / "kernel.exe"),
         "--output",
-        str(BUILD_DIRECTORY / "helloos.img"),
+        str(SYSTEM_IMAGE),
         "--files-root",
         str(ROOT),
     ]
@@ -175,21 +243,20 @@ def main():
     if result.returncode != 0:
         raise RuntimeError("Failed to build the bootable disk image.")
 
-    data_disk = BUILD_DIRECTORY / "data.img"
-    if not data_disk.exists():
+    if not DATA_IMAGE.exists():
         result = subprocess.run(
             [
                 sys.executable,
                 str(ROOT / "tools" / "make_data_disk.py"),
                 "--output",
-                str(data_disk),
+                str(DATA_IMAGE),
             ],
             check=False,
         )
         if result.returncode != 0:
             raise RuntimeError("Failed to create the ext2 secondary disk.")
 
-    print(f"Built {BUILD_DIRECTORY / 'helloos.img'}")
+    print(f"Built {SYSTEM_IMAGE}")
 
 
 if __name__ == "__main__":

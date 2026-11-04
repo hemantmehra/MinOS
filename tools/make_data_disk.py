@@ -6,7 +6,7 @@ from make_disk import populate_ext2
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = Path(__file__).resolve().parent / "data_files"
-DEFAULT_OUTPUT = ROOT / "build" / "data.img"
+DEFAULT_OUTPUT = ROOT / "build" / "disks" / "data.img"
 DISK_IMAGE_SIZE = 8 * 1024 * 1024
 
 

@@ -178,7 +178,12 @@ def main():
         "image",
         nargs="?",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "build" / "data.img",
+        default=(
+            Path(__file__).resolve().parents[1]
+            / "build"
+            / "disks"
+            / "data.img"
+        ),
     )
     parser.add_argument("path", nargs="?", default="/")
     arguments = parser.parse_args()

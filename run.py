@@ -6,8 +6,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-IMAGE = ROOT / "build" / "helloos.img"
-DATA_IMAGE = ROOT / "build" / "data.img"
+IMAGE = ROOT / "build" / "disks" / "system.img"
+DATA_IMAGE = ROOT / "build" / "disks" / "data.img"
 
 
 def find_qemu():

@@ -4,7 +4,7 @@ MinOS High is a small procedural language for bundled applications. During a
 build, every `src/programs/*.high` file passes through these stages:
 
 ```text
-.high -> tools/high_compiler.py -> build/programs/*.asm -> NASM -> build/*.EXE
+.high -> tools/high_compiler.py -> build/programs/*.asm -> NASM -> build/programs/*.EXE
 ```
 
 The generated executables use the MinOS `MEXE` format and kernel system calls.
