@@ -40,7 +40,10 @@ enum ProcessService
     PROCESS_SERVICE_WRITE_FILE,
     PROCESS_SERVICE_TRUNCATE_FILE,
     PROCESS_SERVICE_READ_STREAM,
-    PROCESS_SERVICE_WRITE_STREAM
+    PROCESS_SERVICE_WRITE_STREAM,
+    PROCESS_SERVICE_KILL_PROCESS = 26,
+    PROCESS_SERVICE_CLEAR_GRAPHICS,
+    PROCESS_SERVICE_DRAW_PIXEL
 };
 
 enum ProcessStandardHandle
@@ -54,14 +57,19 @@ void processes_initialize(void);
 enum ProcessStartResult process_start(
     const char *filename,
     const char *arguments,
-    unsigned int *process_id);
+    unsigned int *process_id,
+    int background);
 enum ProcessStartResult process_start_pipeline(
     const char *first_filename,
     const char *first_arguments,
     const char *second_filename,
-    const char *second_arguments);
+    const char *second_arguments,
+    int background);
 void process_list(void);
 int process_has_active_process(void);
+int process_has_foreground_process(void);
+int process_kill_by_name(
+    unsigned int caller_process_id, const char *name);
 unsigned char process_keyboard_read_scancode(void);
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack);
 unsigned int __cdecl process_system_call(unsigned int *saved_stack);

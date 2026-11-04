@@ -43,6 +43,15 @@ returns its saved stack pointer to the interrupt stub. The stub restores that
 task's context and returns from the interrupt. This is how the process gets
 CPU time and how the shell resumes between process time slices.
 
+Commands normally run in the foreground, and the shell waits for them to exit.
+Appending `&` marks a process as a background task; the shell immediately
+returns to its prompt while that task remains scheduled. Background tasks do
+not receive keyboard input, which keeps shell typing and foreground input
+separate. `kill <process-name>` terminates the first active process whose name
+matches, case-insensitively; an optional `.exe` suffix or drive/path prefix is
+ignored. Process cleanup releases its open streams and memory on a later
+timer tick.
+
 ## System calls
 
 Programs request kernel services with `int 0x80`. The system-call stub saves
@@ -68,6 +77,8 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `15` | Read command-line arguments | Writable integer array in `ECX`, capacity in `EDX`; returns the character count or `-1` |
 | `16` | Get current directory | Writable integer array in `ECX`, capacity in `EDX`; returns the path length or `-1` |
 | `17` | Change current directory | Uses the command-line arguments saved when the process started; returns `1` on success or `0` on failure |
+| `27` | Clear the graphics framebuffer | Palette color in `EBX` |
+| `28` | Draw one framebuffer pixel | `EBX` = x, `EDX` = y, `ECX` = palette color |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;
@@ -83,8 +94,13 @@ are released automatically when their owning process exits. Directory
 traversal, hidden-name filtering, and listing output are implemented in High;
 the services only open, read, and close streams.
 Drawing, terminal input, and BASIC parsing and interpretation are also
-implemented in High; kernel services expose only graphics setup/restore and
-character output for those operations.
+implemented in High; kernel services expose graphics setup/restore, framebuffer
+clear and pixel operations, and character output.
+
+Processes started with a trailing `&` run in the background without blocking
+the shell. Background processes cannot change the terminal display or draw to
+the shared graphics framebuffer, so a graphical program can run without hiding
+the shell; terminate it with `kill <name>`.
 
 ## Exiting a process
 

@@ -115,6 +115,10 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   only `STD_OUTPUT_HANDLE`. It returns the number of bytes written or `-1`.
   The existing `print`, `print_char`, and `print_num` builtins use standard
   output.
+- `kill_process()` terminates the first active process matching the
+  command-line process name (case-insensitive, with an optional `.exe` suffix)
+  and returns `1` when it succeeds, `0` when no process matches, or `-1` for
+  an empty name.
 - `clock();`, `memory_report();`, and `process_list();` show the current time,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments
@@ -124,6 +128,7 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   initializes a white framebuffer; `end_graphics_mode` restores the terminal.
 - `clear(color);` fills the 1280x720 framebuffer with an 8-bit palette color.
 - `pixel(x, y, color);` draws one pixel when the coordinates are on screen.
+  Background processes cannot change the shared display.
 
 `src/programs/ls.high` implements directory listing, hidden-name filtering, and
 output formatting in High, using the directory stream services. It lists the

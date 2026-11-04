@@ -29,7 +29,10 @@ static int parse_pipeline_stage(char **command, char **arguments)
     return 1;
 }
 
-static void run_pipeline(char *first_command, char *second_command)
+static void run_pipeline(
+    char *first_command,
+    char *second_command,
+    int background)
 {
     char *first_arguments;
     char *second_arguments;
@@ -46,7 +49,8 @@ static void run_pipeline(char *first_command, char *second_command)
         first_command,
         first_arguments,
         second_command,
-        second_arguments);
+        second_arguments,
+        background);
     if (result != PROCESS_START_OK)
     {
         if (result == PROCESS_START_NOT_FOUND)
@@ -70,7 +74,9 @@ static void run_command(char *command)
     char *name_end;
     char *pipe_separator = 0;
     char *scan;
+    char *command_end;
     unsigned int process_id;
+    int background = 0;
     enum ProcessStartResult result;
 
     while (is_space(*command))
@@ -81,6 +87,26 @@ static void run_command(char *command)
     if (*command == '\0')
     {
         return;
+    }
+
+    command_end = command;
+    while (*command_end != '\0')
+    {
+        ++command_end;
+    }
+    while (command_end > command && is_space(command_end[-1]))
+    {
+        --command_end;
+    }
+    if (command_end > command && command_end[-1] == '&')
+    {
+        background = 1;
+        --command_end;
+        while (command_end > command && is_space(command_end[-1]))
+        {
+            --command_end;
+        }
+        *command_end = '\0';
     }
 
     for (scan = command; *scan != '\0'; ++scan)
@@ -98,7 +124,7 @@ static void run_command(char *command)
     if (pipe_separator != 0)
     {
         *pipe_separator = '\0';
-        run_pipeline(command, pipe_separator + 1);
+        run_pipeline(command, pipe_separator + 1, background);
         return;
     }
 
@@ -131,7 +157,8 @@ static void run_command(char *command)
         !command_token_equals(command, name_end, "ls") &&
         !command_token_equals(command, name_end, "cd") &&
         !command_token_equals(command, name_end, "cat") &&
-        !command_token_equals(command, name_end, "write"))
+        !command_token_equals(command, name_end, "write") &&
+        !command_token_equals(command, name_end, "kill"))
     {
         terminal_write("Unknown command or executable arguments: ");
         terminal_write(command);
@@ -140,7 +167,7 @@ static void run_command(char *command)
     }
 
     *name_end = '\0';
-    result = process_start(command, argument, &process_id);
+    result = process_start(command, argument, &process_id, background);
     switch (result)
     {
     case PROCESS_START_OK:
@@ -341,7 +368,7 @@ void __cdecl kernel_main(void)
         unsigned int length = 0;
         char character;
 
-        while (process_has_active_process())
+        while (process_has_foreground_process())
         {
         }
 

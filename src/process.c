@@ -73,6 +73,7 @@ typedef struct
     unsigned int standard_input_handle;
     unsigned int standard_output_handle;
     unsigned int standard_error_handle;
+    unsigned char background;
     unsigned int input_pipe;
     unsigned int output_pipe;
 } Process;
@@ -394,17 +395,25 @@ static void process_pipe_close_endpoint(const Process *process)
     }
 }
 
+static void process_terminate(Process *process)
+{
+    if (process->state != TASK_ACTIVE)
+    {
+        return;
+    }
+
+    filesystem_close_process_directories(process->process_id);
+    filesystem_close_process_files(process->process_id);
+    process_pipe_close_endpoint(process);
+    process->state = TASK_DYING;
+}
+
 static void process_terminate_current(void)
 {
     if (current_task != 0 &&
         processes[current_task].state == TASK_ACTIVE)
     {
-        filesystem_close_process_directories(
-            processes[current_task].process_id);
-        filesystem_close_process_files(
-            processes[current_task].process_id);
-        process_pipe_close_endpoint(&processes[current_task]);
-        processes[current_task].state = TASK_DYING;
+        process_terminate(&processes[current_task]);
         current_task = find_next_active_task();
     }
 }
@@ -544,6 +553,7 @@ void processes_initialize(void)
         processes[slot].standard_input_handle = STD_INPUT_HANDLE;
         processes[slot].standard_output_handle = STD_OUTPUT_HANDLE;
         processes[slot].standard_error_handle = STD_ERROR_HANDLE;
+        processes[slot].background = 0;
         processes[slot].input_pipe = 0;
         processes[slot].output_pipe = 0;
     }
@@ -563,7 +573,8 @@ void processes_initialize(void)
 enum ProcessStartResult process_start(
     const char *filename,
     const char *arguments,
-    unsigned int *process_id)
+    unsigned int *process_id,
+    int background)
 {
     unsigned int flags = disable_interrupts();
     unsigned int slot;
@@ -623,6 +634,7 @@ enum ProcessStartResult process_start(
     process->standard_input_handle = STD_INPUT_HANDLE;
     process->standard_output_handle = STD_OUTPUT_HANDLE;
     process->standard_error_handle = STD_ERROR_HANDLE;
+    process->background = (unsigned char)(background != 0);
     process->input_pipe = 0;
     process->output_pipe = 0;
     for (index = 0; index <= argument_length; ++index)
@@ -809,7 +821,8 @@ enum ProcessStartResult process_start_pipeline(
     const char *first_filename,
     const char *first_arguments,
     const char *second_filename,
-    const char *second_arguments)
+    const char *second_arguments,
+    int background)
 {
     unsigned int flags = disable_interrupts();
     unsigned int first_process_id;
@@ -836,7 +849,7 @@ enum ProcessStartResult process_start_pipeline(
     process_pipe.overflowed = 0;
 
     result = process_start(
-        first_filename, first_arguments, &first_process_id);
+        first_filename, first_arguments, &first_process_id, background);
     if (result != PROCESS_START_OK)
     {
         process_pipe.active = 0;
@@ -863,7 +876,7 @@ enum ProcessStartResult process_start_pipeline(
     process_pipe.producer_id = first_process_id;
     first_process->output_pipe = 1;
     result = process_start(
-        second_filename, second_arguments, &second_process_id);
+        second_filename, second_arguments, &second_process_id, background);
     if (result != PROCESS_START_OK)
     {
         process_pipe.active = 0;
@@ -1114,6 +1127,11 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         saved_stack[11] = (unsigned int)filesystem_truncate_file(
             process->process_id, saved_stack[8]);
     }
+    else if (syscall_number == PROCESS_SERVICE_KILL_PROCESS)
+    {
+        saved_stack[11] = (unsigned int)process_kill_by_name(
+            process->process_id, process->arguments);
+    }
     else if (syscall_number == PROCESS_SERVICE_READ_STREAM)
     {
         unsigned int capacity = saved_stack[9];
@@ -1232,10 +1250,35 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         }
         saved_stack[11] = 0;
     }
+    else if (syscall_number == PROCESS_SERVICE_CLEAR_GRAPHICS)
+    {
+        if (!process->background)
+        {
+            video_clear_graphics((unsigned char)saved_stack[8]);
+        }
+        saved_stack[11] = 0;
+    }
+    else if (syscall_number == PROCESS_SERVICE_DRAW_PIXEL)
+    {
+        if (!process->background)
+        {
+            video_draw_pixel(
+                saved_stack[8],
+                saved_stack[9],
+                (unsigned char)saved_stack[10]);
+        }
+        saved_stack[11] = 0;
+    }
     else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
         syscall_number < PROCESS_SERVICE_WRITE_CHARACTER)
     {
-        shell_run_service(syscall_number, process->arguments);
+        if (!process->background ||
+            (syscall_number != PROCESS_SERVICE_TERMINAL_CLEAR &&
+                syscall_number != PROCESS_SERVICE_START_GRAPHICS &&
+                syscall_number != PROCESS_SERVICE_END_GRAPHICS))
+        {
+            shell_run_service(syscall_number, process->arguments);
+        }
         saved_stack[11] = 0;
     }
     else if (syscall_number == PROCESS_SYSCALL_EXIT)
@@ -1287,6 +1330,10 @@ void process_keyboard_scancode(unsigned char scancode)
         {
             continue;
         }
+        if (process->background)
+        {
+            continue;
+        }
 
         character = keyboard_decode_scancode(
             scancode,
@@ -1333,6 +1380,145 @@ int process_has_active_process(void)
     return 0;
 }
 
+int process_has_foreground_process(void)
+{
+    unsigned int slot;
+
+    for (slot = 1; slot < TASK_LIMIT; ++slot)
+    {
+        if (processes[slot].state == TASK_ACTIVE &&
+            !processes[slot].background)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int process_name_matches(
+    const char *process_name,
+    const char *requested_name)
+{
+    const char *process_base = process_name;
+    const char *requested_base = requested_name;
+    unsigned int process_length = 0;
+    unsigned int requested_length = 0;
+    unsigned int index;
+
+    while (*process_name != '\0')
+    {
+        if (*process_name == '/' || *process_name == '\\' ||
+            *process_name == ':')
+        {
+            process_base = process_name + 1;
+        }
+        ++process_name;
+    }
+    while (*requested_name != '\0')
+    {
+        if (*requested_name == '/' || *requested_name == '\\' ||
+            *requested_name == ':')
+        {
+            requested_base = requested_name + 1;
+        }
+        ++requested_name;
+    }
+
+    while (process_base[process_length] != '\0')
+    {
+        ++process_length;
+    }
+    while (requested_base[requested_length] != '\0')
+    {
+        ++requested_length;
+    }
+    while (requested_length != 0 &&
+        is_space(requested_base[requested_length - 1]))
+    {
+        --requested_length;
+    }
+
+    if (process_length >= 4 &&
+        process_base[process_length - 4] == '.' &&
+        (process_base[process_length - 3] == 'e' ||
+            process_base[process_length - 3] == 'E') &&
+        (process_base[process_length - 2] == 'x' ||
+            process_base[process_length - 2] == 'X') &&
+        (process_base[process_length - 1] == 'e' ||
+            process_base[process_length - 1] == 'E'))
+    {
+        process_length -= 4;
+    }
+    if (requested_length >= 4 &&
+        requested_base[requested_length - 4] == '.' &&
+        (requested_base[requested_length - 3] == 'e' ||
+            requested_base[requested_length - 3] == 'E') &&
+        (requested_base[requested_length - 2] == 'x' ||
+            requested_base[requested_length - 2] == 'X') &&
+        (requested_base[requested_length - 1] == 'e' ||
+            requested_base[requested_length - 1] == 'E'))
+    {
+        requested_length -= 4;
+    }
+    if (process_length == 0 || process_length != requested_length)
+    {
+        return 0;
+    }
+
+    for (index = 0; index < process_length; ++index)
+    {
+        char left = process_base[index];
+        char right = requested_base[index];
+
+        if (left >= 'A' && left <= 'Z')
+        {
+            left = (char)(left - 'A' + 'a');
+        }
+        if (right >= 'A' && right <= 'Z')
+        {
+            right = (char)(right - 'A' + 'a');
+        }
+        if (left != right)
+        {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+int process_kill_by_name(
+    unsigned int caller_process_id,
+    const char *name)
+{
+    unsigned int slot;
+
+    while (is_space(*name))
+    {
+        ++name;
+    }
+    if (*name == '\0')
+    {
+        return -1;
+    }
+
+    for (slot = 1; slot < TASK_LIMIT; ++slot)
+    {
+        Process *process = &processes[slot];
+
+        if (process->state == TASK_ACTIVE &&
+            process->process_id != caller_process_id &&
+            process_name_matches(process->name, name))
+        {
+            process_terminate(process);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 void process_list(void)
 {
     unsigned int flags = disable_interrupts();
@@ -1358,7 +1544,14 @@ void process_list(void)
             terminal_write("LOADING ");
             break;
         case TASK_ACTIVE:
-            terminal_write(slot == current_task ? "RUNNING " : "READY   ");
+            if (process->background)
+            {
+                terminal_write("BACKGROUND ");
+            }
+            else
+            {
+                terminal_write(slot == current_task ? "RUNNING " : "READY   ");
+            }
             break;
         case TASK_DYING:
             terminal_write("EXITING ");

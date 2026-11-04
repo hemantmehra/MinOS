@@ -12,6 +12,11 @@ void video_terminal_restore(void);
 void video_initialize(void);
 void video_start_graphics(void);
 void video_end_graphics(void);
+void video_clear_graphics(unsigned char color);
+void video_draw_pixel(
+    unsigned int x,
+    unsigned int y,
+    unsigned char color);
 void interrupts_initialize(void);
 void clock_write_time(void);
 void keyboard_handle_irq(void);

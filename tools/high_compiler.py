@@ -22,6 +22,7 @@ BUILTINS = {
     "end_graphics_mode": (0, "statement"),
     "equals": (2, "expression"),
     "key": (0, "expression"),
+    "kill_process": (0, "expression"),
     "make_directory": (0, "statement"),
     "memory_report": (0, "statement"),
     "parse_int": (2, "expression"),
@@ -77,6 +78,9 @@ PROCESS_SERVICES = {
     "truncate_file": 23,
     "read_stream": 24,
     "write_stream": 25,
+    "kill_process": 26,
+    "clear_graphics": 27,
+    "draw_pixel": 28,
 }
 
 STANDARD_HANDLES = {
@@ -719,7 +723,11 @@ class CodeGenerator:
     def _generate_expression_call(self, expression):
         name = expression["name"]
         arguments = expression["arguments"]
-        if name == "key":
+        if name == "kill_process":
+            self._check_arity(expression, 0)
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
+            self._line("    int 0x80")
+        elif name == "key":
             self._check_arity(expression, 0)
             self._line("    mov eax, 2")
             self._line("    int 0x80")
@@ -1564,34 +1572,32 @@ class CodeGenerator:
         self._line("")
 
         self._line("__high_clear:")
-        self._line("    mov eax, [esp+4]")
-        self._line("    push edi")
-        self._line("    mov edi, 0xD0000000")
-        self._line("    mov ecx, 1280 * 720")
-        self._line("    rep stosb")
-        self._line("    pop edi")
+        self._line("    push ebx")
+        self._line("    mov ebx, [esp+8]")
+        self._line(
+            f"    mov eax, {PROCESS_SERVICES['clear_graphics']}"
+        )
+        self._line("    int 0x80")
+        self._line("    pop ebx")
         self._line("    ret")
         self._line("")
 
         self._line("__high_pixel:")
         self._line("    push ebp")
         self._line("    mov ebp, esp")
-        self._line("    mov eax, [ebp+8]")
-        self._line("    test eax, eax")
-        self._line("    js __high_pixel_done")
-        self._line("    cmp eax, 1280")
-        self._line("    jae __high_pixel_done")
-        self._line("    mov ecx, [ebp+12]")
-        self._line("    test ecx, ecx")
-        self._line("    js __high_pixel_done")
-        self._line("    cmp ecx, 720")
-        self._line("    jae __high_pixel_done")
-        self._line("    imul ecx, 1280")
-        self._line("    add ecx, eax")
-        self._line("    add ecx, 0xD0000000")
-        self._line("    mov eax, [ebp+16]")
-        self._line("    mov [ecx], al")
-        self._line("__high_pixel_done:")
+        self._line("    push ebx")
+        self._line("    push ecx")
+        self._line("    push edx")
+        self._line("    mov ebx, [ebp+8]")
+        self._line("    mov edx, [ebp+12]")
+        self._line("    mov ecx, [ebp+16]")
+        self._line(
+            f"    mov eax, {PROCESS_SERVICES['draw_pixel']}"
+        )
+        self._line("    int 0x80")
+        self._line("    pop edx")
+        self._line("    pop ecx")
+        self._line("    pop ebx")
         self._line("    mov esp, ebp")
         self._line("    pop ebp")
         self._line("    ret")

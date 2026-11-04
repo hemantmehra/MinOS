@@ -73,8 +73,8 @@ included in the image. Core interfaces are declared in `src\kernel.h`, process
 interfaces in `src\process.h`, and filesystem interfaces in
 `src\filesystem.h`. The print call uses `EAX=1` and a null-terminated string
 pointer in `EBX`; `EAX=0` exits
-the process. The `hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `cat`,
-`mkdir`, `clear`, `draw`, and `basic` commands are High-language programs
+the process. The `hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `cat`, `mkdir`,
+`kill`, `clear`, `draw`, and `basic` commands are High-language programs
 which use kernel services for OS operations; `echo` remains a built-in shell
 command.
 The shell supports a single pipeline between programs, such as `ls | wc`.
@@ -110,6 +110,9 @@ Supported shell commands:
   and `exit` commands.
 - Enter `BALL.EXE` to watch a red ball bounce from a randomized position and
   direction. Press Escape to return to the shell.
+- Add `&` to run a process in the background without blocking the shell, for
+  example `ball &`. Use `kill <process-name>` to terminate a background
+  process, such as `kill ball`.
 - Enter `PAINT.EXE` to run the included drawing program. Press Escape to
   return to the shell.
 - `ls [path]` runs `LS.EXE` to list the current directory or the requested

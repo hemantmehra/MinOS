@@ -26,7 +26,7 @@ void keyboard_handle_irq(void)
     unsigned char scancode = __inbyte(0x60);
 
     process_keyboard_scancode(scancode);
-    if (!process_has_active_process())
+    if (!process_has_foreground_process())
     {
         keyboard_enqueue_scancode(scancode);
     }

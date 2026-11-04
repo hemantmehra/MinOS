@@ -472,7 +472,23 @@ static void graphics_draw_circle(
 
 void video_start_graphics(void)
 {
-    vga_fill_screen(15);
+    video_clear_graphics(15);
+}
+
+void video_clear_graphics(unsigned char color)
+{
+    vga_fill_screen(color);
+}
+
+void video_draw_pixel(
+    unsigned int x,
+    unsigned int y,
+    unsigned char color)
+{
+    if (x < VGA_GRAPHICS_WIDTH && y < VGA_GRAPHICS_HEIGHT)
+    {
+        vga_framebuffer[y * VGA_GRAPHICS_WIDTH + x] = color;
+    }
 }
 
 void video_end_graphics(void)
