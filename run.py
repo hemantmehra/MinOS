@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 IMAGE = ROOT / "build" / "disks" / "system.img"
 DATA_IMAGE = ROOT / "build" / "disks" / "data.img"
+DIAGNOSTICS_DIRECTORY = ROOT / "build" / "diagnostics"
+KERNEL_LOG = DIAGNOSTICS_DIRECTORY / "kernel.log"
 
 
 def find_qemu():
@@ -32,6 +34,7 @@ def main():
         raise RuntimeError(
             "Secondary data disk not found. Run python .\\build.py first."
         )
+    DIAGNOSTICS_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     qemu = find_qemu()
     if qemu is None:
@@ -53,6 +56,10 @@ def main():
             "-boot",
             "order=c",
             "-no-reboot",
+            "-chardev",
+            f"file,id=minos-log,path={KERNEL_LOG},append=on",
+            "-device",
+            "isa-debugcon,iobase=0xe9,chardev=minos-log",
         ],
         check=False,
     )

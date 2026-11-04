@@ -1,5 +1,6 @@
 #include <intrin.h>
 #include "filesystem.h"
+#include "kernel_log.h"
 #include "process.h"
 
 #define PROCESS_LIMIT 8
@@ -203,12 +204,22 @@ static void process_cleanup_terminated(void)
         {
             if (process_release(&processes[slot], slot))
             {
+                kernel_log_value(
+                    KERNEL_LOG_INFO,
+                    "process",
+                    "cleaned up pid",
+                    processes[slot].process_id);
                 processes[slot].state = TASK_UNUSED;
                 video_terminal_restore();
             }
             else
             {
                 processes[slot].state = TASK_CLEANUP_ERROR;
+                kernel_log_value(
+                    KERNEL_LOG_ERROR,
+                    "process",
+                    "memory cleanup failed for pid",
+                    processes[slot].process_id);
                 terminal_write("process: failed to release task memory.\n");
             }
         }
@@ -402,6 +413,11 @@ static void process_terminate(Process *process)
         return;
     }
 
+    kernel_log_value(
+        KERNEL_LOG_INFO,
+        "process",
+        "exiting pid",
+        process->process_id);
     filesystem_close_process_directories(process->process_id);
     filesystem_close_process_files(process->process_id);
     process_pipe_close_endpoint(process);
@@ -568,6 +584,7 @@ void processes_initialize(void)
     processes[0].name[4] = 'l';
     processes[0].name[5] = '\0';
     current_task = 0;
+    kernel_log(KERNEL_LOG_INFO, "process", "scheduler initialized");
 }
 
 enum ProcessStartResult process_start(
@@ -813,6 +830,7 @@ enum ProcessStartResult process_start(
     terminal_write_unsigned(pid);
     terminal_write(")\n");
     process->state = TASK_ACTIVE;
+    kernel_log_value(KERNEL_LOG_INFO, "process", "started pid", pid);
     restore_interrupts(flags);
     return PROCESS_START_OK;
 }

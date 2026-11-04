@@ -137,6 +137,7 @@ def find_visual_studio():
 def run_msvc(developer_command):
     sources = (
         "kernel.c",
+        "kernel_log.c",
         "video.c",
         "filesystem.c",
         "filesystem_directory.c",

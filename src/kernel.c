@@ -1,5 +1,6 @@
 #include "kernel.h"
 #include "filesystem.h"
+#include "kernel_log.h"
 #include "process.h"
 
 static int parse_pipeline_stage(char **command, char **arguments)
@@ -356,10 +357,12 @@ void __cdecl kernel_main(void)
     unsigned char caps_lock = 0;
     unsigned char extended = 0;
 
+    kernel_log(KERNEL_LOG_INFO, "kernel", "booting");
     memory_initialize();
     video_initialize();
     processes_initialize();
     interrupts_initialize();
+    kernel_log(KERNEL_LOG_INFO, "kernel", "initialization complete");
     terminal_write("Hello, world!\n");
     terminal_write("Enter a command or executable name.\n");
 

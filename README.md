@@ -26,6 +26,11 @@ python build.py
 python run.py
 ```
 
+QEMU appends structured kernel logs from the debug console to
+`build\diagnostics\kernel.log`. Open that file in VS Code while MinOS is
+running to inspect boot, subsystem, filesystem, and process events. The log is
+preserved and appended across runs.
+
 QEMU opens the kernel with a BIOS-backed PC. The kernel uses a 1280x720 VBE
 framebuffer with a 16-color palette, rendering the shell with bitmap
 characters and a blue `minios>` prompt. The system disk contains an ext2

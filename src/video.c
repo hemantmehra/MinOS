@@ -1,5 +1,6 @@
 #include <intrin.h>
 #include "kernel.h"
+#include "kernel_log.h"
 
 #define VGA_WIDTH 160
 #define VGA_HEIGHT 45
@@ -110,7 +111,6 @@ void terminal_write_character(char character)
         vga_render_character(
             position, (unsigned char)character, terminal_attribute);
         ++position;
-        __outbyte(0xE9, (unsigned char)character);
     }
 
     if (position >= VGA_WIDTH * VGA_HEIGHT)
@@ -120,15 +120,6 @@ void terminal_write_character(char character)
     }
 
     vga_set_cursor_position(position);
-
-    if (character == '\n')
-    {
-        __outbyte(0xE9, '\n');
-    }
-    else if (character == '\b')
-    {
-        __outbyte(0xE9, '\b');
-    }
 
     __asm
     {
@@ -572,14 +563,10 @@ void video_initialize(void)
     vga_save_text_font();
     if (!vga_set_graphics_mode())
     {
-        const char *error =
-            "video: VBE 1280x720 framebuffer setup failed.\n";
-
-        while (*error != '\0')
-        {
-            __outbyte(0xE9, (unsigned char)*error);
-            ++error;
-        }
+        kernel_log(
+            KERNEL_LOG_ERROR,
+            "video",
+            "VBE 1280x720 framebuffer setup failed");
         for (;;)
         {
             __asm hlt
@@ -587,4 +574,5 @@ void video_initialize(void)
     }
     vga_initialize_palette();
     terminal_clear();
+    kernel_log(KERNEL_LOG_INFO, "video", "VBE graphics initialized");
 }

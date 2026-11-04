@@ -1,5 +1,6 @@
 #include <intrin.h>
 #include "filesystem_internal.h"
+#include "kernel_log.h"
 
 #define ATA_DATA_PORT 0x1F0
 #define ATA_SECTOR_COUNT_PORT 0x1F2
@@ -35,6 +36,7 @@ typedef struct
 static Ext2DirectoryStream directory_streams[EXT2_DIRECTORY_STREAM_LIMIT];
 static Ext2FileStream file_streams[EXT2_FILE_STREAM_LIMIT];
 static char current_directory_path[FILESYSTEM_PATH_MAX + 1] = "A:/";
+static unsigned int filesystem_logged_mounts;
 
 static void ata_delay_400ns(void)
 {
@@ -296,11 +298,21 @@ enum FileSystemError filesystem_mount_drive(
     if (!ata_read_sector(
         filesystem->drive, filesystem->start_sector + 2, sector))
     {
+        kernel_log_value(
+            KERNEL_LOG_ERROR,
+            "filesystem",
+            "superblock read failed for drive",
+            drive);
         return FILESYSTEM_DISK_READ_ERROR;
     }
 
     if (read_little_endian_word(&sector[56]) != EXT2_SUPERBLOCK_MAGIC)
     {
+        kernel_log_value(
+            KERNEL_LOG_WARNING,
+            "filesystem",
+            "invalid ext2 superblock on drive",
+            drive);
         return FILESYSTEM_INVALID_SUPERBLOCK;
     }
 
@@ -329,6 +341,11 @@ enum FileSystemError filesystem_mount_drive(
         (filesystem->inode_size != 128 && filesystem->inode_size != 256) ||
         (filesystem->inode_size & 3) != 0)
     {
+        kernel_log_value(
+            KERNEL_LOG_WARNING,
+            "filesystem",
+            "invalid ext2 geometry on drive",
+            drive);
         return FILESYSTEM_INVALID_SUPERBLOCK;
     }
 
@@ -336,6 +353,11 @@ enum FileSystemError filesystem_mount_drive(
         (incompat_features & ~EXT2_FEATURE_INCOMPAT_SUPPORTED) != 0 ||
         (ro_compat_features & ~EXT2_FEATURE_RO_COMPAT_SUPPORTED) != 0)
     {
+        kernel_log_value(
+            KERNEL_LOG_WARNING,
+            "filesystem",
+            "unsupported ext2 features on drive",
+            drive);
         return FILESYSTEM_UNSUPPORTED_FEATURE;
     }
 
@@ -363,6 +385,15 @@ enum FileSystemError filesystem_mount_drive(
 
     filesystem->feature_incompat = incompat_features;
     filesystem->feature_ro_compat = ro_compat_features;
+    if ((filesystem_logged_mounts & (1u << drive)) == 0)
+    {
+        filesystem_logged_mounts |= 1u << drive;
+        kernel_log_value(
+            KERNEL_LOG_INFO,
+            "filesystem",
+            "mounted ext2 drive",
+            drive);
+    }
     return FILESYSTEM_OK;
 }
 

@@ -1,5 +1,6 @@
 #include <intrin.h>
 #include "kernel.h"
+#include "kernel_log.h"
 
 #define PAGE_SIZE 4096
 #define PAGE_DIRECTORY_ENTRIES 1024
@@ -86,6 +87,7 @@ void memory_initialize(void)
         or eax, 080000000h
         mov cr0, eax
     }
+    kernel_log(KERNEL_LOG_INFO, "memory", "paging initialized");
 }
 
 unsigned int memory_allocate_page(void)
@@ -101,6 +103,7 @@ unsigned int memory_allocate_page(void)
         }
     }
 
+    kernel_log(KERNEL_LOG_ERROR, "memory", "physical pages exhausted");
     return 0;
 }
 

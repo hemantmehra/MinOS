@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "kernel_log.h"
 #include "process.h"
 
 #define IDT_ENTRY_COUNT 256
@@ -180,5 +181,7 @@ void interrupts_initialize(void)
 
     pic_remap_and_enable_keyboard();
     pit_initialize();
+    kernel_log(KERNEL_LOG_INFO, "keyboard", "IRQ1 enabled");
+    kernel_log(KERNEL_LOG_INFO, "interrupts", "IDT and PIT initialized");
     __asm sti
 }
