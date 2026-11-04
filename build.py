@@ -142,6 +142,7 @@ def run_msvc(developer_command):
         "filesystem.c",
         "filesystem_directory.c",
         "keyboard.c",
+        "mouse.c",
         "interrupts.c",
         "memory.c",
         "process.c",

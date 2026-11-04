@@ -43,7 +43,8 @@ is drive `A:`.
 
 All operating-system source code is under `src\`. Kernel code is organized by
 subsystem: `src\kernel.c` handles shell dispatch, `src\video.c` renders the
-VGA terminal, `src\keyboard.c` reads keyboard input, `src\filesystem.c`
+VGA terminal and pointer, `src\keyboard.c` reads keyboard input,
+`src\mouse.c` handles the PS/2 mouse, `src\filesystem.c`
 implements ext2 access, and `src\filesystem_directory.c` handles ext2
 directory creation. The filesystem APIs are declared in `src\filesystem.h`;
 `src\interrupts.c` sets up the IDT and keyboard IRQ,
@@ -53,8 +54,9 @@ physical pages, and `src\shell_utils.c` provides shared shell helpers. The
 boot sector is `src\boot.asm`; bundled program sources are in
 `src\programs\`. Paging identity-maps the first 16 MiB and provides APIs to
 allocate/free physical pages and map, unmap, and translate virtual addresses.
-CPU exceptions halt safely, keyboard input is delivered through IRQ1, and the
-PIT timer drives the round-robin scheduler in `src\process.c`. The shell and
+CPU exceptions halt safely, keyboard input is delivered through IRQ1, and a
+PS/2 mouse on IRQ12 moves the on-screen pointer. The PIT timer drives the
+round-robin scheduler in `src\process.c`. The shell and
 each loaded process run as one schedulable thread. The scheduler saves and
 restores complete general-register, segment-register, and interrupt contexts,
 and programs use `int 0x80` to print or exit. Kernel and sample programs are

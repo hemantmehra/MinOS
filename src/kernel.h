@@ -29,6 +29,7 @@ void video_draw_pixel(
 void video_present_graphics(
     unsigned int owner_process_id,
     unsigned int window_handle);
+void video_mouse_move(unsigned int x, unsigned int y);
 unsigned int video_create_window(
     unsigned int owner_process_id,
     const char *title,
@@ -40,6 +41,8 @@ int video_destroy_window(
 void interrupts_initialize(void);
 void clock_write_time(void);
 void keyboard_handle_irq(void);
+void mouse_handle_irq(void);
+int mouse_initialize(void);
 void memory_initialize(void);
 unsigned int memory_allocate_page(void);
 int memory_free_page(unsigned int physical_address);

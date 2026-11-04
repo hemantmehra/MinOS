@@ -29,6 +29,10 @@
     ((GRAPHICS_WINDOW_BUFFER_SIZE * 2 + 4095) / 4096)
 #define GRAPHICS_WINDOW_VIRTUAL_BASE 0xE0000000
 #define GRAPHICS_WINDOW_VIRTUAL_STRIDE 0x00100000
+#define MOUSE_POINTER_WIDTH 12
+#define MOUSE_POINTER_HEIGHT 18
+#define MOUSE_POINTER_STORAGE_SIZE \
+    (MOUSE_POINTER_WIDTH * MOUSE_POINTER_HEIGHT)
 #define VGA_FRAMEBUFFER_SIZE \
     (VGA_GRAPHICS_WIDTH * VGA_GRAPHICS_HEIGHT)
 #define VGA_DOUBLE_BUFFER_SIZE (VGA_FRAMEBUFFER_SIZE * 2)
@@ -78,6 +82,10 @@ typedef struct
 
 static GraphicsWindow graphics_windows[GRAPHICS_WINDOW_LIMIT];
 static unsigned char shell_graphics_active;
+static unsigned int mouse_pointer_x = VGA_GRAPHICS_WIDTH / 2;
+static unsigned int mouse_pointer_y = VGA_GRAPHICS_HEIGHT / 2;
+static unsigned char mouse_pointer_drawn[2];
+static unsigned char mouse_pointer_background[2][MOUSE_POINTER_STORAGE_SIZE];
 
 static void vga_fill_rectangle_to(
     volatile unsigned char *target,
@@ -97,6 +105,8 @@ static void vga_render_terminal(void);
 static void vga_render_terminal_to(volatile unsigned char *target);
 static void vga_render_desktop_to(volatile unsigned char *target);
 static void vga_render_windows_to(volatile unsigned char *target);
+static void vga_render_mouse_pointer_to(volatile unsigned char *target);
+static void vga_restore_mouse_pointer(unsigned int page);
 
 static int graphics_window_lookup(
     unsigned int owner_process_id,
@@ -724,6 +734,146 @@ static void vga_render_desktop_to(volatile unsigned char *target)
 {
     vga_render_terminal_to(target);
     vga_render_windows_to(target);
+    vga_render_mouse_pointer_to(target);
+}
+
+static void vga_restore_mouse_pointer(unsigned int page)
+{
+    unsigned int row;
+
+    if (!mouse_pointer_drawn[page])
+    {
+        return;
+    }
+
+    for (row = 0; row < MOUSE_POINTER_HEIGHT; ++row)
+    {
+        unsigned int column;
+        unsigned int y = mouse_pointer_y + row;
+
+        if (y >= VGA_GRAPHICS_HEIGHT)
+        {
+            break;
+        }
+        for (column = 0; column < MOUSE_POINTER_WIDTH; ++column)
+        {
+            unsigned int x = mouse_pointer_x + column;
+
+            if (x < VGA_GRAPHICS_WIDTH)
+            {
+                vga_framebuffer[
+                    page * VGA_FRAMEBUFFER_SIZE +
+                    y * VGA_GRAPHICS_WIDTH + x] =
+                    mouse_pointer_background[page][
+                        row * MOUSE_POINTER_WIDTH + column];
+            }
+        }
+    }
+    mouse_pointer_drawn[page] = 0;
+}
+
+static void vga_update_mouse_pointer_background(
+    unsigned int page,
+    unsigned int x,
+    unsigned int y,
+    unsigned char color)
+{
+    unsigned int relative_x;
+    unsigned int relative_y;
+
+    if (page > 1 || !mouse_pointer_drawn[page] ||
+        x < mouse_pointer_x || y < mouse_pointer_y)
+    {
+        return;
+    }
+
+    relative_x = x - mouse_pointer_x;
+    relative_y = y - mouse_pointer_y;
+    if (relative_x < MOUSE_POINTER_WIDTH &&
+        relative_y < MOUSE_POINTER_HEIGHT)
+    {
+        mouse_pointer_background[page][
+            relative_y * MOUSE_POINTER_WIDTH + relative_x] = color;
+    }
+}
+
+static void vga_render_mouse_pointer_to(volatile unsigned char *target)
+{
+    static const char *shape[MOUSE_POINTER_HEIGHT] =
+        {
+            "#...........",
+            "##..........",
+            "#W#.........",
+            "#WW#........",
+            "#WWW#.......",
+            "#WWWW#......",
+            "#WWWWW#.....",
+            "#WWWWWW#....",
+            "#WWWWWWW#...",
+            "#WWWWWWWW#..",
+            "#WWWW#......",
+            "#WW#WW#.....",
+            "#W#..WW#....",
+            "##...WW#....",
+            "......WW#...",
+            "......WW#...",
+            ".......##...",
+            "............"
+        };
+    unsigned int page;
+    unsigned int row;
+
+    if (target == vga_framebuffer)
+    {
+        page = 0;
+    }
+    else if (target == vga_framebuffer + VGA_FRAMEBUFFER_SIZE)
+    {
+        page = 1;
+    }
+    else
+    {
+        return;
+    }
+
+    mouse_pointer_drawn[page] = 0;
+    for (row = 0; row < MOUSE_POINTER_HEIGHT; ++row)
+    {
+        unsigned int column;
+        unsigned int y = mouse_pointer_y + row;
+
+        if (y >= VGA_GRAPHICS_HEIGHT)
+        {
+            break;
+        }
+        for (column = 0; column < MOUSE_POINTER_WIDTH; ++column)
+        {
+            unsigned int x = mouse_pointer_x + column;
+            unsigned int index = row * MOUSE_POINTER_WIDTH + column;
+            unsigned char pixel;
+
+            if (x >= VGA_GRAPHICS_WIDTH)
+            {
+                break;
+            }
+            mouse_pointer_background[page][index] =
+                target[y * VGA_GRAPHICS_WIDTH + x];
+            if (shape[row][column] == '#')
+            {
+                pixel = 0;
+            }
+            else if (shape[row][column] == 'W')
+            {
+                pixel = 15;
+            }
+            else
+            {
+                continue;
+            }
+            target[y * VGA_GRAPHICS_WIDTH + x] = pixel;
+            mouse_pointer_drawn[page] = 1;
+        }
+    }
 }
 
 static void vga_render_windows_to(volatile unsigned char *target)
@@ -793,7 +943,7 @@ static void vga_render_windows_to(volatile unsigned char *target)
 
 static void vga_render_terminal(void)
 {
-    vga_render_terminal_to(vga_framebuffer);
+    vga_render_desktop_to(vga_framebuffer);
 }
 
 unsigned int video_create_window(
@@ -1012,6 +1162,7 @@ void video_start_graphics(
                 SHELL_CLIENT_HEIGHT,
                 15);
             vga_render_windows_to(target);
+            vga_render_mouse_pointer_to(target);
         }
     }
     else
@@ -1048,6 +1199,8 @@ void video_clear_graphics(
             SHELL_CLIENT_WIDTH,
             SHELL_CLIENT_HEIGHT,
             color);
+        vga_render_windows_to(vga_back_buffer);
+        vga_render_mouse_pointer_to(vga_back_buffer);
     }
 }
 
@@ -1071,9 +1224,16 @@ void video_draw_pixel(
     else if (window_handle == 0 && shell_graphics_active &&
         x < SHELL_CLIENT_WIDTH && y < SHELL_CLIENT_HEIGHT)
     {
+        unsigned int screen_x = SHELL_CONTENT_X + x;
+        unsigned int screen_y = SHELL_CONTENT_Y + y;
+
+        vga_update_mouse_pointer_background(
+            vga_back_buffer_index,
+            screen_x,
+            screen_y,
+            color);
         vga_back_buffer[
-            (SHELL_CONTENT_Y + y) * VGA_GRAPHICS_WIDTH +
-            SHELL_CONTENT_X + x] = color;
+            screen_y * VGA_GRAPHICS_WIDTH + screen_x] = color;
     }
 }
 
@@ -1101,6 +1261,7 @@ void video_present_graphics(
     {
         vga_render_shell_graphics_chrome_to(vga_back_buffer);
         vga_render_windows_to(vga_back_buffer);
+        vga_render_mouse_pointer_to(vga_back_buffer);
     }
     else
     {
@@ -1163,6 +1324,21 @@ void video_terminal_restore(void)
     vbe_write_register(VGA_VBE_INDEX_Y_OFFSET, 0);
     vga_back_buffer_index = 1;
     vga_back_buffer = vga_framebuffer + VGA_FRAMEBUFFER_SIZE;
+}
+
+void video_mouse_move(unsigned int x, unsigned int y)
+{
+    unsigned int page;
+
+    vga_restore_mouse_pointer(0);
+    vga_restore_mouse_pointer(1);
+    mouse_pointer_x = x;
+    mouse_pointer_y = y;
+    for (page = 0; page < 2; ++page)
+    {
+        vga_render_mouse_pointer_to(
+            vga_framebuffer + page * VGA_FRAMEBUFFER_SIZE);
+    }
 }
 
 void terminal_write_unsigned(unsigned int value)

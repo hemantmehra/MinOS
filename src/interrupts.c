@@ -69,6 +69,30 @@ static void __declspec(naked) keyboard_irq_stub(void)
     }
 }
 
+static void __declspec(naked) mouse_irq_stub(void)
+{
+    __asm
+    {
+        pushad
+        push ds
+        push es
+        push fs
+        push gs
+        mov ax, KERNEL_DATA_SELECTOR
+        mov ds, ax
+        mov es, ax
+        mov fs, ax
+        mov gs, ax
+        call mouse_handle_irq
+        pop gs
+        pop fs
+        pop es
+        pop ds
+        popad
+        iretd
+    }
+}
+
 static void __declspec(naked) timer_irq_stub(void)
 {
     __asm
@@ -136,7 +160,7 @@ static void interrupt_set_gate(
     interrupt_table[vector].offset_high = (unsigned short)(address >> 16);
 }
 
-static void pic_remap_and_enable_keyboard(void)
+static void pic_remap(void)
 {
     __outbyte(PIC_MASTER_COMMAND, 0x11);
     __outbyte(PIC_SLAVE_COMMAND, 0x11);
@@ -146,7 +170,7 @@ static void pic_remap_and_enable_keyboard(void)
     __outbyte(PIC_SLAVE_DATA, 0x02);
     __outbyte(PIC_MASTER_DATA, 0x01);
     __outbyte(PIC_SLAVE_DATA, 0x01);
-    __outbyte(PIC_MASTER_DATA, 0xFC);
+    __outbyte(PIC_MASTER_DATA, 0xF8);
     __outbyte(PIC_SLAVE_DATA, 0xFF);
 }
 
@@ -169,6 +193,7 @@ void interrupts_initialize(void)
         interrupt_set_gate(vector, interrupt_halt);
     }
     interrupt_set_gate(0x21, keyboard_irq_stub);
+    interrupt_set_gate(0x2C, mouse_irq_stub);
     interrupt_set_gate(0x20, timer_irq_stub);
     interrupt_set_gate(0x80, system_call_stub);
 
@@ -179,8 +204,20 @@ void interrupts_initialize(void)
         lidt fword ptr [interrupt_descriptor]
     }
 
-    pic_remap_and_enable_keyboard();
+    pic_remap();
     pit_initialize();
+    if (mouse_initialize())
+    {
+        __outbyte(PIC_SLAVE_DATA, 0xEF);
+        kernel_log(KERNEL_LOG_INFO, "mouse", "PS/2 mouse IRQ12 enabled");
+    }
+    else
+    {
+        kernel_log(
+            KERNEL_LOG_WARNING,
+            "mouse",
+            "PS/2 mouse initialization failed");
+    }
     kernel_log(KERNEL_LOG_INFO, "keyboard", "IRQ1 enabled");
     kernel_log(KERNEL_LOG_INFO, "interrupts", "IDT and PIT initialized");
     __asm sti
