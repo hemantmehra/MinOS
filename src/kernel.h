@@ -17,6 +17,7 @@ void video_draw_pixel(
     unsigned int x,
     unsigned int y,
     unsigned char color);
+void video_present_graphics(void);
 void interrupts_initialize(void);
 void clock_write_time(void);
 void keyboard_handle_irq(void);

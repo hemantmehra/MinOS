@@ -27,6 +27,7 @@ BUILTINS = {
     "memory_report": (0, "statement"),
     "parse_int": (2, "expression"),
     "pixel": (3, "statement"),
+    "present": (0, "statement"),
     "print": (1, "statement"),
     "print_char": (1, "statement"),
     "print_num": (1, "statement"),
@@ -81,6 +82,7 @@ PROCESS_SERVICES = {
     "kill_process": 26,
     "clear_graphics": 27,
     "draw_pixel": 28,
+    "present": 29,
 }
 
 STANDARD_HANDLES = {
@@ -628,6 +630,11 @@ class CodeGenerator:
             self._push_arguments(arguments)
             self._line(f"    call __high_{name}")
             self._discard_arguments(expected)
+            return
+        if name == "present":
+            self._check_arity(expression, 0)
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
+            self._line("    int 0x80")
             return
         if name in SYSTEM_SERVICES:
             self._check_arity(expression, 0)

@@ -128,6 +128,7 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   initializes a white framebuffer; `end_graphics_mode` restores the terminal.
 - `clear(color);` fills the 1280x720 framebuffer with an 8-bit palette color.
 - `pixel(x, y, color);` draws one pixel when the coordinates are on screen.
+- `present();` swaps the back buffer to the screen after drawing a frame.
   Background processes cannot change the shared display.
 
 `src/programs/ls.high` implements directory listing, hidden-name filtering, and
@@ -138,7 +139,7 @@ the file stream services.
 `src/programs/basic.high` implements the line editor, parser, and BASIC
 interpreter in High, using character input/output primitives. `draw.high`
 implements the circle rasterization in High, using pixel writes and graphics
-start/restore services.
+start/restore and frame presentation services.
 
 Integer values use 32-bit arithmetic; `print_num` prints signed decimal values.
 Factorial is limited to 0 through 12 to fit in the kernel's 32-bit integer

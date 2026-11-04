@@ -1269,6 +1269,14 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         }
         saved_stack[11] = 0;
     }
+    else if (syscall_number == PROCESS_SERVICE_PRESENT_GRAPHICS)
+    {
+        if (!process->background)
+        {
+            video_present_graphics();
+        }
+        saved_stack[11] = 0;
+    }
     else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
         syscall_number < PROCESS_SERVICE_WRITE_CHARACTER)
     {

@@ -14,6 +14,7 @@ fn main() {
         } else {
             clear(15);
             draw_ball(x, y, radius);
+            present();
 
             x = x + velocity_x;
             y = y + velocity_y;

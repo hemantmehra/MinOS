@@ -139,7 +139,8 @@ Supported shell commands:
   name must contain 1-8 letters, digits, underscores, or hyphens.
 - `clear` runs `CLEAR.EXE` to clear the screen.
 - `draw` runs `DRAW.EXE`, which draws a red circle on white in High and uses
-  primitive graphics start/end services. Press Escape to return to the shell.
+  primitive graphics services. It draws into a back buffer and presents the
+  completed frame; press Escape to return to the shell.
 - `basic` runs `BASIC.EXE`, which opens a line-numbered BASIC interpreter.
   The interpreter is implemented in High; it supports numbered lines,
   `RUN`, `LIST`, `NEW`, `EXIT`, `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`,

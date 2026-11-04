@@ -7,9 +7,10 @@
 #define VGA_GRAPHICS_HEIGHT 720
 #define VGA_FRAMEBUFFER_SIZE \
     (VGA_GRAPHICS_WIDTH * VGA_GRAPHICS_HEIGHT)
+#define VGA_DOUBLE_BUFFER_SIZE (VGA_FRAMEBUFFER_SIZE * 2)
 #define VGA_FRAMEBUFFER_VIRTUAL 0xD0000000
 #define VGA_FRAMEBUFFER_PAGES \
-    (VGA_FRAMEBUFFER_SIZE / 4096)
+    (VGA_DOUBLE_BUFFER_SIZE / 4096)
 #define VGA_VBE_INDEX_PORT 0x1CE
 #define VGA_VBE_DATA_PORT 0x1CF
 #define VGA_VBE_INDEX_ID 0
@@ -18,6 +19,7 @@
 #define VGA_VBE_INDEX_BPP 3
 #define VGA_VBE_INDEX_ENABLE 4
 #define VGA_VBE_INDEX_VIRTUAL_WIDTH 6
+#define VGA_VBE_INDEX_VIRTUAL_HEIGHT 7
 #define VGA_VBE_INDEX_X_OFFSET 8
 #define VGA_VBE_INDEX_Y_OFFSET 9
 #define VGA_VBE_ENABLE 0x01
@@ -31,6 +33,8 @@ static unsigned short terminal_position;
 static unsigned short terminal_cells[VGA_WIDTH * VGA_HEIGHT];
 static unsigned char terminal_attribute = 0x0F;
 static volatile unsigned char *vga_framebuffer;
+static volatile unsigned char *vga_back_buffer;
+static unsigned int vga_back_buffer_index;
 
 static void vga_render_character(
     unsigned short position,
@@ -270,6 +274,8 @@ static int vga_set_graphics_mode(void)
     vbe_write_register(VGA_VBE_INDEX_YRES, VGA_GRAPHICS_HEIGHT);
     vbe_write_register(VGA_VBE_INDEX_BPP, 8);
     vbe_write_register(VGA_VBE_INDEX_VIRTUAL_WIDTH, VGA_GRAPHICS_WIDTH);
+    vbe_write_register(
+        VGA_VBE_INDEX_VIRTUAL_HEIGHT, VGA_GRAPHICS_HEIGHT * 2);
     vbe_write_register(VGA_VBE_INDEX_X_OFFSET, 0);
     vbe_write_register(VGA_VBE_INDEX_Y_OFFSET, 0);
     vbe_write_register(
@@ -299,6 +305,8 @@ static int vga_set_graphics_mode(void)
 
     vga_framebuffer =
         (volatile unsigned char *)VGA_FRAMEBUFFER_VIRTUAL;
+    vga_back_buffer = vga_framebuffer + VGA_FRAMEBUFFER_SIZE;
+    vga_back_buffer_index = 1;
     return 1;
 }
 
@@ -472,12 +480,21 @@ static void graphics_draw_circle(
 
 void video_start_graphics(void)
 {
+    vbe_write_register(VGA_VBE_INDEX_Y_OFFSET, 0);
+    vga_back_buffer_index = 1;
+    vga_back_buffer = vga_framebuffer + VGA_FRAMEBUFFER_SIZE;
+    vga_fill_screen(15);
     video_clear_graphics(15);
 }
 
 void video_clear_graphics(unsigned char color)
 {
-    vga_fill_screen(color);
+    unsigned int index;
+
+    for (index = 0; index < VGA_FRAMEBUFFER_SIZE; ++index)
+    {
+        vga_back_buffer[index] = color;
+    }
 }
 
 void video_draw_pixel(
@@ -487,17 +504,49 @@ void video_draw_pixel(
 {
     if (x < VGA_GRAPHICS_WIDTH && y < VGA_GRAPHICS_HEIGHT)
     {
-        vga_framebuffer[y * VGA_GRAPHICS_WIDTH + x] = color;
+        vga_back_buffer[y * VGA_GRAPHICS_WIDTH + x] = color;
+    }
+}
+
+void video_present_graphics(void)
+{
+    unsigned int flags;
+
+    __asm
+    {
+        pushfd
+        pop eax
+        mov flags, eax
+        cli
+    }
+
+    vbe_write_register(
+        VGA_VBE_INDEX_Y_OFFSET,
+        (unsigned short)(vga_back_buffer_index * VGA_GRAPHICS_HEIGHT));
+    vga_back_buffer_index ^= 1;
+    vga_back_buffer = vga_framebuffer +
+        vga_back_buffer_index * VGA_FRAMEBUFFER_SIZE;
+
+    __asm
+    {
+        push flags
+        popfd
     }
 }
 
 void video_end_graphics(void)
 {
+    vbe_write_register(VGA_VBE_INDEX_Y_OFFSET, 0);
+    vga_back_buffer_index = 1;
+    vga_back_buffer = vga_framebuffer + VGA_FRAMEBUFFER_SIZE;
     vga_render_terminal();
 }
 
 void video_terminal_restore(void)
 {
+    vbe_write_register(VGA_VBE_INDEX_Y_OFFSET, 0);
+    vga_back_buffer_index = 1;
+    vga_back_buffer = vga_framebuffer + VGA_FRAMEBUFFER_SIZE;
     vga_render_terminal();
 }
 

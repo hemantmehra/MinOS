@@ -79,6 +79,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `17` | Change current directory | Uses the command-line arguments saved when the process started; returns `1` on success or `0` on failure |
 | `27` | Clear the graphics framebuffer | Palette color in `EBX` |
 | `28` | Draw one framebuffer pixel | `EBX` = x, `EDX` = y, `ECX` = palette color |
+| `29` | Present the back buffer | No arguments |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;
@@ -95,7 +96,7 @@ traversal, hidden-name filtering, and listing output are implemented in High;
 the services only open, read, and close streams.
 Drawing, terminal input, and BASIC parsing and interpretation are also
 implemented in High; kernel services expose graphics setup/restore, framebuffer
-clear and pixel operations, and character output.
+clear and pixel operations, frame presentation, and character output.
 
 Processes started with a trailing `&` run in the background without blocking
 the shell. Background processes cannot change the terminal display or draw to

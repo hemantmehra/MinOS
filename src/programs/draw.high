@@ -18,6 +18,7 @@ fn main() {
         }
         y = y + 1;
     }
+    present();
 
     while (key() != 1) {
     }
