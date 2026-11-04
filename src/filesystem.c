@@ -111,7 +111,7 @@ enum FileSystemError
 
 static Ext2DirectoryStream directory_streams[EXT2_DIRECTORY_STREAM_LIMIT];
 static Ext2FileStream file_streams[EXT2_FILE_STREAM_LIMIT];
-static char current_directory_path[FILESYSTEM_PATH_MAX + 1] = "/";
+static char current_directory_path[FILESYSTEM_PATH_MAX + 1] = "A:/";
 
 static void ata_delay_400ns(void)
 {
@@ -441,11 +441,6 @@ static enum FileSystemError filesystem_mount_drive(
     filesystem->feature_incompat = incompat_features;
     filesystem->feature_ro_compat = ro_compat_features;
     return FILESYSTEM_OK;
-}
-
-static enum FileSystemError filesystem_mount(Ext2FileSystem *filesystem)
-{
-    return filesystem_mount_drive(filesystem, 0);
 }
 
 static int ext2_read_group_descriptor(
@@ -1130,14 +1125,18 @@ static int ext2_name_equals(
     return 1;
 }
 
-static int ext2_normalize_directory_path(
+static int filesystem_prepare_path(
     const char *path,
-    char normalized[FILESYSTEM_PATH_MAX + 1])
+    char canonical[FILESYSTEM_PATH_MAX + 1],
+    char normalized[FILESYSTEM_PATH_MAX + 1],
+    unsigned int *drive)
 {
-    char combined[FILESYSTEM_PATH_MAX * 2 + 2];
-    unsigned int combined_length = 0;
-    unsigned int input_index = 0;
-    unsigned int output_length = 1;
+    const char *remainder;
+    unsigned int output_length = 3;
+    unsigned int input_length = 0;
+    unsigned int index;
+    int absolute = 0;
+    char drive_letter;
 
     if (path == 0)
     {
@@ -1148,149 +1147,147 @@ static int ext2_normalize_directory_path(
     {
         path = current_directory_path;
     }
-    if (path[0] != '/')
-    {
-        unsigned int cwd_index = 0;
 
-        while (current_directory_path[cwd_index] != '\0')
-        {
-            combined[combined_length++] = current_directory_path[cwd_index++];
-        }
-        if (combined_length > 1)
-        {
-            combined[combined_length++] = '/';
-        }
-    }
-    while (path[input_index] != '\0')
+    while (path[input_length] != '\0')
     {
-        if (combined_length >= sizeof(combined))
+        if (input_length == FILESYSTEM_PATH_MAX)
         {
             return 0;
         }
-        combined[combined_length++] = path[input_index++];
+        ++input_length;
     }
 
-    normalized[0] = '/';
-    normalized[1] = '\0';
-    input_index = 0;
-    while (input_index < combined_length)
+    drive_letter = current_directory_path[0];
+    if (path[0] >= 'a' && path[0] <= 'z' &&
+        path[1] == ':' && (path[2] == '/' || path[2] == '\0'))
     {
-        unsigned int component_start;
+        drive_letter = (char)(path[0] - 'a' + 'A');
+        remainder = path + 2;
+        if (*remainder == '/')
+        {
+            ++remainder;
+        }
+        absolute = 1;
+    }
+    else if (path[0] >= 'A' && path[0] <= 'Z' &&
+        path[1] == ':' && (path[2] == '/' || path[2] == '\0'))
+    {
+        drive_letter = path[0];
+        remainder = path + 2;
+        if (*remainder == '/')
+        {
+            ++remainder;
+        }
+        absolute = 1;
+    }
+    else
+    {
+        remainder = path;
+        if (path[0] == '/')
+        {
+            absolute = 1;
+            while (*remainder == '/')
+            {
+                ++remainder;
+            }
+        }
+        else if ((path[0] >= 'A' && path[0] <= 'Z') ||
+            (path[0] >= 'a' && path[0] <= 'z'))
+        {
+            if (path[1] == ':')
+            {
+                return 0;
+            }
+        }
+    }
+
+    if (drive_letter != 'A' && drive_letter != 'B')
+    {
+        return 0;
+    }
+    canonical[0] = drive_letter;
+    canonical[1] = ':';
+    canonical[2] = '/';
+    canonical[3] = '\0';
+
+    if (!absolute)
+    {
+        for (index = 3; current_directory_path[index] != '\0'; ++index)
+        {
+            if (output_length >= FILESYSTEM_PATH_MAX)
+            {
+                return 0;
+            }
+            canonical[output_length++] = current_directory_path[index];
+        }
+        canonical[output_length] = '\0';
+    }
+
+    while (*remainder != '\0')
+    {
         unsigned int component_length;
+        const char *component_start;
 
-        while (input_index < combined_length &&
-            combined[input_index] == '/')
+        while (*remainder == '/')
         {
-            ++input_index;
+            ++remainder;
         }
-        component_start = input_index;
-        while (input_index < combined_length &&
-            combined[input_index] != '/')
+        if (*remainder == '\0')
         {
-            ++input_index;
+            break;
         }
-        component_length = input_index - component_start;
-
-        if (component_length == 0 ||
-            (component_length == 1 &&
-                combined[component_start] == '.'))
+        component_start = remainder;
+        while (*remainder != '\0' && *remainder != '/')
+        {
+            ++remainder;
+        }
+        component_length = (unsigned int)(remainder - component_start);
+        if (component_length == 1 && component_start[0] == '.')
         {
             continue;
         }
-        if (component_length == 2 &&
-            combined[component_start] == '.' &&
-            combined[component_start + 1] == '.')
+        if (component_length == 2 && component_start[0] == '.' &&
+            component_start[1] == '.')
         {
-            if (output_length > 1)
+            if (output_length > 3)
             {
-                while (output_length > 1 &&
-                    normalized[output_length - 1] != '/')
+                while (output_length > 3 &&
+                    canonical[output_length - 1] != '/')
                 {
                     --output_length;
                 }
-                if (output_length > 1)
+                if (output_length > 3)
                 {
                     --output_length;
                 }
-                normalized[output_length] = '\0';
+                canonical[output_length] = '\0';
             }
             continue;
         }
         if (component_length > EXT2_NAME_MAX ||
-            output_length + (output_length > 1 ? 1 : 0) +
+            output_length + (output_length > 3 ? 1 : 0) +
                 component_length > FILESYSTEM_PATH_MAX)
         {
             return 0;
         }
-        if (output_length > 1)
+        if (output_length > 3)
         {
-            normalized[output_length++] = '/';
+            canonical[output_length++] = '/';
         }
-        while (component_length != 0)
+        for (index = 0; index < component_length; ++index)
         {
-            normalized[output_length++] =
-                combined[component_start++];
-            --component_length;
+            canonical[output_length++] = component_start[index];
         }
-        normalized[output_length] = '\0';
-    }
-    return 1;
-}
-
-static int filesystem_prepare_path(
-    const char *path,
-    char canonical[FILESYSTEM_PATH_MAX + 1],
-    char normalized[FILESYSTEM_PATH_MAX + 1],
-    unsigned int *drive)
-{
-    unsigned int index;
-
-    if (path == 0)
-    {
-        return 0;
+        canonical[output_length] = '\0';
     }
 
-    for (index = 0; path[index] != '\0'; ++index)
+    *drive = drive_letter == 'B' ? 1 : 0;
+    normalized[0] = '/';
+    for (index = 3; index < output_length; ++index)
     {
-        if (index == FILESYSTEM_PATH_MAX)
-        {
-            return 0;
-        }
+        normalized[index - 2] = canonical[index];
     }
-    if (!ext2_normalize_directory_path(path, canonical))
-    {
-        return 0;
-    }
-
-    if (canonical[0] == '/' && canonical[1] == 'd' &&
-        canonical[2] == 'a' && canonical[3] == 't' &&
-        canonical[4] == 'a' &&
-        (canonical[5] == '\0' || canonical[5] == '/'))
-    {
-        *drive = 1;
-        if (canonical[5] == '\0')
-        {
-            normalized[0] = '/';
-            normalized[1] = '\0';
-        }
-        else
-        {
-            for (index = 5; canonical[index] != '\0'; ++index)
-            {
-                normalized[index - 5] = canonical[index];
-            }
-            normalized[index - 5] = '\0';
-        }
-    }
-    else
-    {
-        *drive = 0;
-        for (index = 0; canonical[index] != '\0'; ++index)
-        {
-            normalized[index] = canonical[index];
-        }
-        normalized[index] = '\0';
-    }
+    normalized[output_length - 2] = '\0';
     return 1;
 }
 
@@ -1453,96 +1450,6 @@ static int ext2_lookup_file_path(
         return 1;
     }
     return 0;
-}
-
-static int ext2_lookup_root_file(
-    const Ext2FileSystem *filesystem,
-    const char *name,
-    unsigned int name_length,
-    Ext2Inode *file_inode)
-{
-    Ext2Inode root_inode;
-    Ext2DirectoryIterator iterator;
-    Ext2DirectoryEntry entry;
-    int result;
-
-    if (!ext2_read_inode(filesystem, EXT2_ROOT_INODE, &root_inode) ||
-        (ext2_inode_mode(&root_inode) & EXT2_S_IFMT) != EXT2_S_IFDIR)
-    {
-        return -1;
-    }
-
-    iterator.byte_offset = 0;
-    iterator.loaded_block = 0xFFFFFFFF;
-    while ((result = ext2_directory_next(
-        filesystem, &root_inode, &iterator, &entry)) > 0)
-    {
-        if (entry.inode == 0 ||
-            !ext2_name_equals(
-                entry.name, entry.name_length, name, name_length))
-        {
-            continue;
-        }
-
-        if (!ext2_read_inode(filesystem, entry.inode, file_inode))
-        {
-            return -1;
-        }
-        if ((ext2_inode_mode(file_inode) & EXT2_S_IFMT) != EXT2_S_IFREG)
-        {
-            return 0;
-        }
-        return 1;
-    }
-
-    return result < 0 ? -1 : 0;
-}
-
-static int ext2_make_executable_name(
-    const char *name,
-    char normalized[EXT2_NAME_MAX + 1],
-    unsigned int *normalized_length)
-{
-    unsigned int length = 0;
-    unsigned int index;
-    int has_extension = 0;
-
-    if (name == 0 || name[0] == '\0')
-    {
-        return 0;
-    }
-
-    while (name[length] != '\0')
-    {
-        if (length == EXT2_NAME_MAX || name[length] == '/')
-        {
-            return 0;
-        }
-        if (name[length] == '.')
-        {
-            has_extension = 1;
-        }
-        normalized[length] = name[length];
-        ++length;
-    }
-
-    if (!has_extension)
-    {
-        static const char extension[] = ".EXE";
-
-        if (length + sizeof(extension) - 1 > EXT2_NAME_MAX)
-        {
-            return 0;
-        }
-        for (index = 0; index < sizeof(extension) - 1; ++index)
-        {
-            normalized[length++] = extension[index];
-        }
-    }
-
-    normalized[length] = '\0';
-    *normalized_length = length;
-    return 1;
 }
 
 int filesystem_open_directory(unsigned int owner, const char *path)
@@ -2000,21 +1907,106 @@ enum FileReadResult filesystem_read_root_file(
     Ext2Inode inode;
     unsigned char block[EXT2_BLOCK_SIZE];
     volatile unsigned char *output_buffer = buffer;
-    char normalized_name[EXT2_NAME_MAX + 1];
-    unsigned int name_length;
+    char executable_path[FILESYSTEM_PATH_MAX + 1];
+    char canonical_path[FILESYSTEM_PATH_MAX + 1];
+    char normalized_path[FILESYSTEM_PATH_MAX + 1];
+    unsigned int drive;
+    unsigned int name_length = 0;
+    unsigned int path_length = 0;
+    unsigned int component_start = 0;
+    unsigned int index;
+    int has_extension = 0;
     unsigned int high_size;
     unsigned int block_index;
     int lookup_result;
     enum FileSystemError mount_result;
 
     if (buffer == 0 || file_size == 0 ||
-        !ext2_make_executable_name(
-            name, normalized_name, &name_length))
+        name == 0 || name[0] == '\0')
     {
         return FILE_READ_INVALID_NAME;
     }
 
-    mount_result = filesystem_mount(&filesystem);
+    while (name[name_length] != '\0')
+    {
+        if (name_length == FILESYSTEM_PATH_MAX)
+        {
+            return FILE_READ_INVALID_NAME;
+        }
+        ++name_length;
+    }
+
+    if (name[1] != ':' && name[0] != '/' &&
+        name[0] >= ' ' && name[0] <= '~')
+    {
+        int has_separator = 0;
+
+        for (index = 0; index < name_length; ++index)
+        {
+            if (name[index] == '/')
+            {
+                has_separator = 1;
+            }
+        }
+        if (!has_separator)
+        {
+            static const char prefix[] = "A:/";
+
+            if (name_length + sizeof(prefix) - 1 > FILESYSTEM_PATH_MAX)
+            {
+                return FILE_READ_INVALID_NAME;
+            }
+            executable_path[0] = prefix[0];
+            executable_path[1] = prefix[1];
+            executable_path[2] = prefix[2];
+            for (index = 0; index <= name_length; ++index)
+            {
+                executable_path[index + 3] = name[index];
+            }
+            name = executable_path;
+        }
+    }
+
+    if (!filesystem_prepare_path(
+        name, canonical_path, normalized_path, &drive))
+    {
+        return FILE_READ_INVALID_NAME;
+    }
+
+    while (normalized_path[path_length] != '\0')
+    {
+        if (normalized_path[path_length] == '/')
+        {
+            component_start = path_length + 1;
+        }
+        ++path_length;
+    }
+    if (path_length == 1 || component_start == path_length)
+    {
+        return FILE_READ_INVALID_NAME;
+    }
+    for (index = component_start; index < path_length; ++index)
+    {
+        if (normalized_path[index] == '.')
+        {
+            has_extension = 1;
+        }
+    }
+    if (!has_extension)
+    {
+        static const char extension[] = ".EXE";
+
+        if (path_length + sizeof(extension) - 1 > FILESYSTEM_PATH_MAX)
+        {
+            return FILE_READ_INVALID_NAME;
+        }
+        for (index = 0; index < sizeof(extension); ++index)
+        {
+            normalized_path[path_length + index] = extension[index];
+        }
+    }
+
+    mount_result = filesystem_mount_drive(&filesystem, drive);
     if (mount_result == FILESYSTEM_DISK_READ_ERROR)
     {
         return FILE_READ_DISK_ERROR;
@@ -2024,8 +2016,8 @@ enum FileReadResult filesystem_read_root_file(
         return FILE_READ_CORRUPT;
     }
 
-    lookup_result = ext2_lookup_root_file(
-        &filesystem, normalized_name, name_length, &inode);
+    lookup_result = ext2_lookup_file_path(
+        &filesystem, normalized_path, &inode);
     if (lookup_result < 0)
     {
         return FILE_READ_CORRUPT;

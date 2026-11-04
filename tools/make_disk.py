@@ -246,7 +246,7 @@ def allocate_inode_blocks(node, allocate_block, write_block_callback):
     node.block_pointers[13] = double_root
 
 
-def populate_ext2(volume, files_root, extra_files=(), include_data_mount=False):
+def populate_ext2(volume, files_root, extra_files=()):
     block_count = len(volume) // EXT2_BLOCK_SIZE
     group_count = math.ceil(
         (block_count - EXT2_FIRST_DATA_BLOCK) / EXT2_BLOCKS_PER_GROUP
@@ -265,10 +265,6 @@ def populate_ext2(volume, files_root, extra_files=(), include_data_mount=False):
     root = build_directory(files_root, "/")
     root.inode = EXT2_ROOT_INODE
     root.parent_inode = EXT2_ROOT_INODE
-    if include_data_mount and not any(
-        child.name.casefold() == "data" for child in root.children
-    ):
-        root.children.append(Directory(None, "data"))
     used_names = {child.name for child in root.children}
     for name, path in extra_files:
         validate_name(name)
@@ -538,7 +534,6 @@ def build_disk(boot_path, kernel_path, output_path, files_root, extra_files=()):
         memoryview(disk)[filesystem_start:],
         files_root,
         extra_files,
-        include_data_mount=True,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(disk)

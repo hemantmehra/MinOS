@@ -32,7 +32,8 @@ characters and a blue `minios>` prompt. The system disk contains an ext2
 filesystem populated with project files and directories. A separate 8 MiB
 ext2 data disk is attached as the secondary IDE drive at
 `build\disks\data.img`; its contents persist across normal builds and are
-available under `/data`. The system disk image is `build\disks\system.img`.
+available as drive `B:`. The system disk image is `build\disks\system.img` and
+is drive `A:`.
 
 All operating-system source code is under `src\`. Kernel code is organized by
 subsystem: `src\kernel.c` handles shell dispatch, `src\video.c` renders the
@@ -113,9 +114,10 @@ Supported shell commands:
 - `cd <path>` runs `CD.EXE` to change the current directory. Paths may be
   absolute or relative and support `.` and `..`.
 - `cat <file>` runs `CAT.EXE` to display a file using file stream services.
-- `/data/<file>` addresses files on the secondary ext2 disk. For example,
-  `cat /data/SAMPLE.TXT` reads a test file and
-  `write /data/WRITE.TXT <text>` replaces the writable test file's contents.
+- `A:/<path>` addresses the system disk and `B:/<path>` addresses the secondary
+  ext2 disk. For example, `A:/ball.exe` runs the system-disk executable,
+  `cat B:/SAMPLE.TXT` reads a data-disk file, and
+  `write B:/WRITE.TXT <text>` replaces the writable file's contents.
   Writes are limited to the file's preallocated ext2 capacity.
 - `python tools\read_disk.py` lists the root of `build\disks\data.img`, or
   `python tools\read_disk.py build\disks\data.img /SAMPLE.TXT` reads a file after
@@ -126,7 +128,7 @@ Supported shell commands:
   directory entries. Only one pipe is supported, and its in-memory buffer is
   limited to 16 KiB.
 - `mkdir <path>` runs `MKDIR.EXE` to create a directory in the current or
-  specified path, including `/data/<name>` on the secondary disk. The final
+  specified path, including `B:/<name>` on the secondary disk. The final
   name must contain 1-8 letters, digits, underscores, or hyphens.
 - `clear` runs `CLEAR.EXE` to clear the screen.
 - `draw` runs `DRAW.EXE`, which draws a red circle on white in High and uses

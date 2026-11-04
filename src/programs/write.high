@@ -8,7 +8,7 @@ fn main() {
     let result = -1;
 
     if (argument_length < 0) {
-        print("Usage: write /data/file <text>\n");
+        print("Usage: write B:/file <text>\n");
         return;
     }
 
@@ -16,7 +16,7 @@ fn main() {
         index = index + 1;
     }
     if (arguments[index] == 0) {
-        print("Usage: write /data/file <text>\n");
+        print("Usage: write B:/file <text>\n");
         return;
     }
     arguments[index] = 0;
@@ -37,13 +37,13 @@ fn main() {
 
     handle = open_file(arguments);
     if (handle < 0) {
-        print("write: could not open file. Use an existing /data file.\n");
+        print("write: could not open file. Use an existing B: file.\n");
         return;
     }
     result = truncate_file(handle);
     if (result < 0) {
         close_file(handle);
-        print("write: writing is supported only on /data files.\n");
+        print("write: writing is supported only on B: files.\n");
         return;
     }
     result = write_file(handle, contents, content_length);

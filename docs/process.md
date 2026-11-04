@@ -75,9 +75,9 @@ break scancodes have bit 7 set, and the Escape make scancode is `1`.
 Unsupported calls or invalid print requests terminate the calling process.
 Directory paths support absolute and current-directory-relative paths,
 including `.` and `..`; symbolic links are not supported. The current directory
-is shared by shell-launched programs. `/data` is a visible mount point for the
-secondary ext2 disk; changing directory and creating directories beneath it
-operate on that disk. The kernel writes each entry name as
+is shared by shell-launched programs. Drive `A:` is the system disk and drive
+`B:` is the secondary ext2 data disk; absolute paths such as `A:/ball.exe` and
+`B:/SAMPLE.TXT` select the corresponding disk. The kernel writes each entry name as
 integer character values into the caller's validated stack buffer. Open streams
 are released automatically when their owning process exits. Directory
 traversal, hidden-name filtering, and listing output are implemented in High;
@@ -121,8 +121,8 @@ File paths may be absolute or relative to the shared current directory. Reads
 return byte values in a validated integer buffer. Open files are closed
 automatically when the owning process exits.
 
-An ext2 data disk is attached as the secondary IDE drive. Absolute paths under
-`/data` resolve from its root; the primary system disk remains unchanged.
+An ext2 data disk is attached as the secondary IDE drive. `A:/` resolves to
+the system disk and `B:/` resolves to the secondary data disk.
 Writes and truncation are restricted to this secondary disk. Files must already
 exist and have allocated data blocks; writes cannot grow beyond allocated
 capacity.
