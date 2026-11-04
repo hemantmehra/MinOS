@@ -1,11 +1,20 @@
 fn main() {
+    let window = create_window("Paint", 640, 480);
+    if (window == 0) {
+        print("paint: could not create graphics window.\n");
+        return;
+    }
+
+    start_graphics_mode();
     clear(15);
-    draw_circle(260, 360, 130, 12);
+    draw_circle(130, 240, 80, 12);
     draw_triangle();
     draw_rectangle();
+    present();
 
     while (key() != 1) {
     }
+    end_graphics_mode();
 }
 
 fn draw_circle(center_x, center_y, radius, color) {
@@ -27,11 +36,11 @@ fn draw_circle(center_x, center_y, radius, color) {
 }
 
 fn draw_triangle() {
-    let y = 200;
-    while (y <= 480) {
-        let half_width = (y - 200) / 2;
-        let x = 640 - half_width;
-        let right = 640 + half_width;
+    let y = 80;
+    while (y <= 380) {
+        let half_width = (y - 80) / 2;
+        let x = 320 - half_width;
+        let right = 320 + half_width;
         while (x <= right) {
             pixel(x, y, 10);
             x = x + 1;
@@ -41,10 +50,10 @@ fn draw_triangle() {
 }
 
 fn draw_rectangle() {
-    let y = 230;
-    while (y <= 490) {
-        let x = 930;
-        while (x <= 1170) {
+    let y = 130;
+    while (y <= 370) {
+        let x = 465;
+        while (x <= 600) {
             pixel(x, y, 9);
             x = x + 1;
         }

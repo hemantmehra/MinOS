@@ -1517,6 +1517,13 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             saved_stack[11] = process->window_handle;
         }
     }
+    else if (syscall_number == PROCESS_SERVICE_START_GRAPHICS &&
+        process->window_handle == 0)
+    {
+        terminal_write(
+            "process: graphics mode requires a window; terminating.\n");
+        process_terminate_current();
+    }
     else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
         syscall_number < PROCESS_SERVICE_WRITE_CHARACTER)
     {

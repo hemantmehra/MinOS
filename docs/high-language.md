@@ -127,15 +127,17 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   window owned by the calling process and returns its handle, or `0` on
   failure. Width and height must be between 1 and 640 by 1 and 480, and the
   non-empty title is limited to 31 characters. Graphics operations target the
-  process's window after creation; without a window, they target the shell
-  graphics area. Pixel coordinates are local to the selected drawing area.
+  process's window after creation. Starting graphics mode without a window
+  reports an error to the shell and terminates the process. Pixel coordinates
+  are local to the window.
 - `clock();`, `memory_report();`, and `process_list();` show the current time,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments
   supplied when the program was launched.
 - `terminal_clear();`, `start_graphics_mode();`, and `end_graphics_mode();`
   invoke primitive terminal and graphics services. `start_graphics_mode`
-  initializes a white framebuffer; `end_graphics_mode` restores the terminal.
+  initializes a white framebuffer in the process's window and requires that a
+  window has been created; `end_graphics_mode` restores the terminal.
 - `clear(color);` fills the selected graphics surface with an 8-bit palette
   color.
 - `pixel(x, y, color);` draws one pixel when the coordinates are inside the

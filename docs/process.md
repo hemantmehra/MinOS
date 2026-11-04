@@ -75,7 +75,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `6` | List active processes and threads | No arguments |
 | `7` | Create a directory | Uses the command-line path saved when the program started |
 | `8` | Clear the terminal | No arguments |
-| `9` | Initialize graphics output with a white framebuffer | No arguments |
+| `9` | Start graphics output in the process's window | No arguments; terminates the process with a shell error if it has no window |
 | `10` | Restore the terminal display | No arguments |
 | `11` | Write one character | Character in `EBX` |
 | `12` | Open a directory stream | `EBX` points to a string in the executable image or a 128-element integer path array on the process stack; returns a handle or `-1` |
@@ -106,9 +106,10 @@ traversal, hidden-name filtering, and listing output are implemented in High;
 the services only open, read, and close streams.
 Drawing, terminal input, and BASIC parsing and interpretation are also
 implemented in High; kernel services expose graphics setup/restore, per-process
-window creation and double-buffered drawing, shell graphics fallback, and
-character output. A process without a window draws into the shell graphics
-area; a process-created window is isolated from other processes' drawing.
+window creation and double-buffered drawing, and character output. A process
+must create a window before starting graphics mode; attempting to start
+graphics without one reports an error to the shell and terminates the process.
+A process-created window is isolated from other processes' drawing.
 
 Processes started with a trailing `&` run in the background without blocking
 the shell. Background processes cannot change the terminal display or draw to
