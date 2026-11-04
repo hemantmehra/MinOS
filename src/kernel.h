@@ -10,14 +10,33 @@ void terminal_write_unsigned(unsigned int value);
 void terminal_clear(void);
 void video_terminal_restore(void);
 void video_initialize(void);
-void video_start_graphics(void);
-void video_end_graphics(void);
-void video_clear_graphics(unsigned char color);
+void video_start_graphics(
+    unsigned int owner_process_id,
+    unsigned int window_handle);
+void video_end_graphics(
+    unsigned int owner_process_id,
+    unsigned int window_handle);
+void video_clear_graphics(
+    unsigned int owner_process_id,
+    unsigned int window_handle,
+    unsigned char color);
 void video_draw_pixel(
+    unsigned int owner_process_id,
+    unsigned int window_handle,
     unsigned int x,
     unsigned int y,
     unsigned char color);
-void video_present_graphics(void);
+void video_present_graphics(
+    unsigned int owner_process_id,
+    unsigned int window_handle);
+unsigned int video_create_window(
+    unsigned int owner_process_id,
+    const char *title,
+    unsigned int width,
+    unsigned int height);
+int video_destroy_window(
+    unsigned int owner_process_id,
+    unsigned int window_handle);
 void interrupts_initialize(void);
 void clock_write_time(void);
 void keyboard_handle_irq(void);

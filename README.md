@@ -96,9 +96,9 @@ restore the shell display. Applications can poll keyboard scancodes with
 a number from 0 to 12 to display its factorial.
 `src\programs\stack.high` is compiled as `STACK.EXE`; it provides `push <n>`,
 `pop`, `top`, and `exit` commands using a 100-element integer array.
-`src\programs\ball.high` is compiled as `BALL.EXE`; it animates a red ball
-that bounces off the screen edges. Each launch chooses a random starting
-position and direction; press Escape to exit.
+`src\programs\ball.high` is compiled as `BALL.EXE`; it creates a graphics
+window and animates a red ball that bounces off the window edges. Each launch
+chooses a random starting position and direction; press Escape to exit.
 `src\programs\p1.high` and `p2.high` demonstrate child-process creation and
 waiting; run `P1.EXE` to start `P2.EXE`, wait for it to exit, and then finish.
 

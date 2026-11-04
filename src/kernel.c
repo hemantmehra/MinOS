@@ -322,7 +322,11 @@ static void shell_make_directory(const char *arguments)
     }
 }
 
-void shell_run_service(unsigned int service, const char *arguments)
+void shell_run_service(
+    unsigned int service,
+    const char *arguments,
+    unsigned int owner_process_id,
+    unsigned int window_handle)
 {
     switch (service)
     {
@@ -342,10 +346,10 @@ void shell_run_service(unsigned int service, const char *arguments)
         terminal_clear();
         break;
     case PROCESS_SERVICE_START_GRAPHICS:
-        video_start_graphics();
+        video_start_graphics(owner_process_id, window_handle);
         break;
     case PROCESS_SERVICE_END_GRAPHICS:
-        video_end_graphics();
+        video_end_graphics(owner_process_id, window_handle);
         break;
     }
 }

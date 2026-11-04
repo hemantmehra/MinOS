@@ -123,6 +123,12 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   and returns its process ID, or `-1` if it cannot be started.
 - `wait_process(pid)` blocks until the calling process's child exits, returning
   `1` when the child completes or `0` when the PID is not its child.
+- `let window = create_window("title", width, height)` creates a graphics
+  window owned by the calling process and returns its handle, or `0` on
+  failure. Width and height must be between 1 and 640 by 1 and 480, and the
+  non-empty title is limited to 31 characters. Graphics operations target the
+  process's window after creation; without a window, they target the shell
+  graphics area. Pixel coordinates are local to the selected drawing area.
 - `clock();`, `memory_report();`, and `process_list();` show the current time,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments
@@ -130,20 +136,25 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
 - `terminal_clear();`, `start_graphics_mode();`, and `end_graphics_mode();`
   invoke primitive terminal and graphics services. `start_graphics_mode`
   initializes a white framebuffer; `end_graphics_mode` restores the terminal.
-- `clear(color);` fills the 1280x720 framebuffer with an 8-bit palette color.
-- `pixel(x, y, color);` draws one pixel when the coordinates are on screen.
+- `clear(color);` fills the selected graphics surface with an 8-bit palette
+  color.
+- `pixel(x, y, color);` draws one pixel when the coordinates are inside the
+  selected graphics surface.
 - `present();` swaps the back buffer to the screen after drawing a frame.
-  Background processes cannot change the shared display.
+  Windowed processes have independent double-buffered surfaces. Background
+  processes cannot create windows or change the shared display.
 
 `src/programs/ls.high` implements directory listing, hidden-name filtering, and
 output formatting in High, using the directory stream services. It lists the
 current directory by default and accepts an optional path. `pwd.high` prints
 the current path, `cd.high` changes it, and `cat.high` displays a file using
 the file stream services.
-`src/programs/basic.high` implements the line editor, parser, and BASIC
-interpreter in High, using character input/output primitives. `draw.high`
-implements the circle rasterization in High, using pixel writes and graphics
-start/restore and frame presentation services.
+`src/programs/ball.high` creates its own graphics window and draws its bouncing
+ball using window-local coordinates. `src/programs/basic.high` implements the
+line editor, parser, and BASIC interpreter in High, using character
+input/output primitives. `draw.high` implements the circle rasterization in
+High, using pixel writes and graphics start/restore and frame presentation
+services.
 
 Integer values use 32-bit arithmetic; `print_num` prints signed decimal values.
 Factorial is limited to 0 through 12 to fit in the kernel's 32-bit integer

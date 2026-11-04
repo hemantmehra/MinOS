@@ -56,6 +56,7 @@ typedef struct
     unsigned int process_id;
     unsigned int parent_process_id;
     unsigned int wait_process_id;
+    unsigned int window_handle;
     unsigned int *saved_stack;
     unsigned int code_base;
     unsigned int code_size;
@@ -206,7 +207,21 @@ static void process_cleanup_terminated(void)
     {
         if (processes[slot].state == TASK_DYING)
         {
-            if (process_release(&processes[slot], slot))
+            int resources_released = 1;
+
+            if (processes[slot].window_handle != 0)
+            {
+                resources_released = video_destroy_window(
+                    processes[slot].process_id,
+                    processes[slot].window_handle);
+                if (resources_released)
+                {
+                    processes[slot].window_handle = 0;
+                }
+            }
+
+            if (resources_released &&
+                process_release(&processes[slot], slot))
             {
                 kernel_log_value(
                     KERNEL_LOG_INFO,
@@ -262,9 +277,9 @@ static void process_cleanup_terminated(void)
                 kernel_log_value(
                     KERNEL_LOG_ERROR,
                     "process",
-                    "memory cleanup failed for pid",
+                    "resource cleanup failed for pid",
                     processes[slot].process_id);
-                terminal_write("process: failed to release task memory.\n");
+                terminal_write("process: failed to release task resources.\n");
                 for (waiter_slot = 1;
                     waiter_slot < TASK_LIMIT;
                     ++waiter_slot)
@@ -603,6 +618,30 @@ static int process_copy_user_path(
     return 0;
 }
 
+static int process_copy_user_title(
+    const Process *process,
+    unsigned int address,
+    char title[32])
+{
+    unsigned int image_end = process->code_base + process->code_size;
+    unsigned int index;
+
+    if (address < process->code_base || address >= image_end)
+    {
+        return 0;
+    }
+
+    for (index = 0; index < 32 && address + index < image_end; ++index)
+    {
+        title[index] = *(const char *)(address + index);
+        if (title[index] == '\0')
+        {
+            return index != 0;
+        }
+    }
+    return 0;
+}
+
 static int process_copy_string_to_array(
     const char *source,
     unsigned int *destination,
@@ -632,6 +671,7 @@ void processes_initialize(void)
         processes[slot].state = TASK_UNUSED;
         processes[slot].parent_process_id = 0;
         processes[slot].wait_process_id = 0;
+        processes[slot].window_handle = 0;
         processes[slot].saved_stack = 0;
         processes[slot].code_page_count = 0;
         processes[slot].stack_page_count = 0;
@@ -718,6 +758,7 @@ enum ProcessStartResult process_start(
     process->entry_offset = 0;
     process->parent_process_id = 0;
     process->wait_process_id = 0;
+    process->window_handle = 0;
     process->code_page_count = 0;
     process->stack_page_count = 0;
     process->keyboard_event_read = 0;
@@ -1427,7 +1468,10 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     {
         if (!process->background)
         {
-            video_clear_graphics((unsigned char)saved_stack[8]);
+            video_clear_graphics(
+                process->process_id,
+                process->window_handle,
+                (unsigned char)saved_stack[8]);
         }
         saved_stack[11] = 0;
     }
@@ -1436,6 +1480,8 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         if (!process->background)
         {
             video_draw_pixel(
+                process->process_id,
+                process->window_handle,
                 saved_stack[8],
                 saved_stack[9],
                 (unsigned char)saved_stack[10]);
@@ -1446,9 +1492,30 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     {
         if (!process->background)
         {
-            video_present_graphics();
+            video_present_graphics(
+                process->process_id,
+                process->window_handle);
         }
         saved_stack[11] = 0;
+    }
+    else if (syscall_number == PROCESS_SERVICE_CREATE_WINDOW)
+    {
+        char title[32];
+
+        if (process->background || process->window_handle != 0 ||
+            !process_copy_user_title(process, saved_stack[8], title))
+        {
+            saved_stack[11] = 0;
+        }
+        else
+        {
+            process->window_handle = video_create_window(
+                process->process_id,
+                title,
+                saved_stack[10],
+                saved_stack[9]);
+            saved_stack[11] = process->window_handle;
+        }
     }
     else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
         syscall_number < PROCESS_SERVICE_WRITE_CHARACTER)
@@ -1458,7 +1525,11 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
                 syscall_number != PROCESS_SERVICE_START_GRAPHICS &&
                 syscall_number != PROCESS_SERVICE_END_GRAPHICS))
         {
-            shell_run_service(syscall_number, process->arguments);
+            shell_run_service(
+                syscall_number,
+                process->arguments,
+                process->process_id,
+                process->window_handle);
         }
         saved_stack[11] = 0;
     }

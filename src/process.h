@@ -46,7 +46,8 @@ enum ProcessService
     PROCESS_SERVICE_DRAW_PIXEL,
     PROCESS_SERVICE_PRESENT_GRAPHICS,
     PROCESS_SERVICE_CREATE_PROCESS,
-    PROCESS_SERVICE_WAIT_PROCESS
+    PROCESS_SERVICE_WAIT_PROCESS,
+    PROCESS_SERVICE_CREATE_WINDOW
 };
 
 enum ProcessStandardHandle
@@ -77,6 +78,10 @@ unsigned char process_keyboard_read_scancode(void);
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack);
 unsigned int __cdecl process_system_call(unsigned int *saved_stack);
 void process_keyboard_scancode(unsigned char scancode);
-void shell_run_service(unsigned int service, const char *arguments);
+void shell_run_service(
+    unsigned int service,
+    const char *arguments,
+    unsigned int owner_process_id,
+    unsigned int window_handle);
 
 #endif

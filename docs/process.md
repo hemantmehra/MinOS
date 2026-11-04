@@ -82,6 +82,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `29` | Present the back buffer | No arguments |
 | `30` | Create a child process | `EBX` points to a null-terminated executable name in the caller's image; returns the child PID or `-1` |
 | `31` | Wait for a child process | Child PID in `EBX`; blocks until it exits and returns `1`, or returns `0` if it is not a child |
+| `32` | Create a graphics window | `EBX` points to a non-empty null-terminated title in the caller's image, `ECX` is width (1-640), `EDX` is height (1-480); returns a handle or `0` |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;
@@ -97,8 +98,10 @@ are released automatically when their owning process exits. Directory
 traversal, hidden-name filtering, and listing output are implemented in High;
 the services only open, read, and close streams.
 Drawing, terminal input, and BASIC parsing and interpretation are also
-implemented in High; kernel services expose graphics setup/restore, framebuffer
-clear and pixel operations, frame presentation, and character output.
+implemented in High; kernel services expose graphics setup/restore, per-process
+window creation and double-buffered drawing, shell graphics fallback, and
+character output. A process without a window draws into the shell graphics
+area; a process-created window is isolated from other processes' drawing.
 
 Processes started with a trailing `&` run in the background without blocking
 the shell. Background processes cannot change the terminal display or draw to
@@ -117,7 +120,8 @@ The dying process's memory is not freed while its stack is still in use.
 During a later timer tick, the scheduler releases its executable and stack
 page mappings and returns their physical pages to the allocator. Once cleanup
 succeeds, the slot becomes available for another program and the shell's
-saved terminal contents are redrawn. If cleanup fails, the task is marked
+saved terminal contents are redrawn. Any graphics window owned by the process
+is also hidden and its framebuffer pages are released. If cleanup fails, the task is marked
 with an error state and its mappings are retained rather than treated as
 successfully freed.
 
