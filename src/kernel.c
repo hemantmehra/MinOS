@@ -320,11 +320,6 @@ void shell_run_service(unsigned int service, const char *arguments)
     }
 }
 
-void process_service_write_character(char character)
-{
-    terminal_write_character(character);
-}
-
 void __cdecl kernel_main(void)
 {
     char command[COMMAND_BUFFER_SIZE];

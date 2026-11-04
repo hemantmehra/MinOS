@@ -14,6 +14,9 @@
 #define PROCESS_SYSCALL_EXIT 0
 #define PROCESS_KEYBOARD_QUEUE_SIZE 16
 #define PROCESS_KEYBOARD_QUEUE_MASK (PROCESS_KEYBOARD_QUEUE_SIZE - 1)
+#define PROCESS_STANDARD_INPUT_QUEUE_SIZE 64
+#define PROCESS_STANDARD_INPUT_QUEUE_MASK \
+    (PROCESS_STANDARD_INPUT_QUEUE_SIZE - 1)
 
 enum TaskState
 {
@@ -58,8 +61,17 @@ typedef struct
     volatile unsigned char keyboard_events[PROCESS_KEYBOARD_QUEUE_SIZE];
     volatile unsigned char keyboard_event_read;
     volatile unsigned char keyboard_event_write;
+    volatile unsigned char standard_input[PROCESS_STANDARD_INPUT_QUEUE_SIZE];
+    volatile unsigned char standard_input_read;
+    volatile unsigned char standard_input_write;
+    unsigned char keyboard_shift_pressed;
+    unsigned char keyboard_caps_lock;
+    unsigned char keyboard_extended;
     char arguments[COMMAND_BUFFER_SIZE];
     char name[13];
+    unsigned int standard_input_handle;
+    unsigned int standard_output_handle;
+    unsigned int standard_error_handle;
     unsigned int input_pipe;
     unsigned int output_pipe;
 } Process;
@@ -295,6 +307,72 @@ static int process_pipe_read(
     return (int)bytes_to_read;
 }
 
+static int process_stream_read(
+    Process *process,
+    unsigned int handle,
+    unsigned int *destination,
+    unsigned int capacity)
+{
+    unsigned int bytes_read = 0;
+
+    if (handle != process->standard_input_handle)
+    {
+        return -1;
+    }
+
+    if (process->input_pipe != 0)
+    {
+        return process_pipe_read(
+            process->input_pipe, destination, capacity);
+    }
+
+    while (bytes_read < capacity)
+    {
+        if (process->standard_input_read ==
+            process->standard_input_write)
+        {
+            break;
+        }
+        destination[bytes_read++] =
+            process->standard_input[process->standard_input_read];
+        process->standard_input_read = (unsigned char)(
+            (process->standard_input_read + 1) &
+            PROCESS_STANDARD_INPUT_QUEUE_MASK);
+    }
+    return (int)bytes_read;
+}
+
+static int process_stream_write(
+    Process *process,
+    unsigned int handle,
+    const unsigned char *data,
+    unsigned int length)
+{
+    unsigned int index;
+
+    if (handle == process->standard_output_handle &&
+        process->output_pipe != 0)
+    {
+        if (!process_pipe_write(
+            process->output_pipe, data, length))
+        {
+            return -1;
+        }
+        return (int)length;
+    }
+
+    if (handle != process->standard_output_handle &&
+        handle != process->standard_error_handle)
+    {
+        return -1;
+    }
+    for (index = 0; index < length; ++index)
+    {
+        terminal_write_character((char)data[index]);
+    }
+    return (int)length;
+}
+
 static void process_pipe_close_endpoint(const Process *process)
 {
     if (!process_pipe.active)
@@ -331,7 +409,7 @@ static void process_terminate_current(void)
 }
 
 static int process_print_string(
-    const Process *process,
+    Process *process,
     unsigned int address)
 {
     const unsigned int end = process->code_base + process->code_size;
@@ -349,21 +427,17 @@ static int process_print_string(
     {
         if (*(const char *)index == '\0')
         {
-            if (process->output_pipe != 0)
+            length = index - address;
+            if (!process_stream_write(
+                process,
+                process->standard_output_handle,
+                (const unsigned char *)text,
+                length))
             {
-                length = index - address;
-                if (!process_pipe_write(
-                    process->output_pipe,
-                    (const unsigned char *)text,
-                    length))
-                {
-                    terminal_write(
-                        "process: pipe buffer full or reader closed; terminating.\n");
-                    return 0;
-                }
-                return 1;
+                terminal_write(
+                    "process: pipe buffer full or reader closed; terminating.\n");
+                return 0;
             }
-            terminal_write(text);
             return 1;
         }
     }
@@ -460,7 +534,15 @@ void processes_initialize(void)
         processes[slot].stack_page_count = 0;
         processes[slot].keyboard_event_read = 0;
         processes[slot].keyboard_event_write = 0;
+        processes[slot].standard_input_read = 0;
+        processes[slot].standard_input_write = 0;
+        processes[slot].keyboard_shift_pressed = 0;
+        processes[slot].keyboard_caps_lock = 0;
+        processes[slot].keyboard_extended = 0;
         processes[slot].arguments[0] = '\0';
+        processes[slot].standard_input_handle = STD_INPUT_HANDLE;
+        processes[slot].standard_output_handle = STD_OUTPUT_HANDLE;
+        processes[slot].standard_error_handle = STD_ERROR_HANDLE;
         processes[slot].input_pipe = 0;
         processes[slot].output_pipe = 0;
     }
@@ -532,6 +614,14 @@ enum ProcessStartResult process_start(
     process->stack_page_count = 0;
     process->keyboard_event_read = 0;
     process->keyboard_event_write = 0;
+    process->standard_input_read = 0;
+    process->standard_input_write = 0;
+    process->keyboard_shift_pressed = 0;
+    process->keyboard_caps_lock = 0;
+    process->keyboard_extended = 0;
+    process->standard_input_handle = STD_INPUT_HANDLE;
+    process->standard_output_handle = STD_OUTPUT_HANDLE;
+    process->standard_error_handle = STD_ERROR_HANDLE;
     process->input_pipe = 0;
     process->output_pipe = 0;
     for (index = 0; index <= argument_length; ++index)
@@ -1023,6 +1113,81 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         saved_stack[11] = (unsigned int)filesystem_truncate_file(
             process->process_id, saved_stack[8]);
     }
+    else if (syscall_number == PROCESS_SERVICE_READ_STREAM)
+    {
+        unsigned int capacity = saved_stack[9];
+        unsigned int buffer_size;
+
+        if (capacity > 256 ||
+            capacity > 0xFFFFFFFF / sizeof(unsigned int))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            buffer_size = capacity * sizeof(unsigned int);
+            if (capacity != 0 &&
+                !process_stack_buffer_is_valid(
+                    process, saved_stack[10], buffer_size))
+            {
+                saved_stack[11] = (unsigned int)-1;
+            }
+            else
+            {
+                saved_stack[11] = (unsigned int)process_stream_read(
+                    process,
+                    saved_stack[8],
+                    (unsigned int *)saved_stack[10],
+                    capacity);
+            }
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_WRITE_STREAM)
+    {
+        unsigned int length = saved_stack[9];
+        unsigned int buffer_size;
+
+        if (length > 256 ||
+            length > 0xFFFFFFFF / sizeof(unsigned int))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            buffer_size = length * sizeof(unsigned int);
+            if (length != 0 &&
+                !process_stack_buffer_is_valid(
+                    process, saved_stack[10], buffer_size))
+            {
+                saved_stack[11] = (unsigned int)-1;
+            }
+            else
+            {
+                unsigned char buffer[256];
+                const unsigned int *source =
+                    (const unsigned int *)saved_stack[10];
+                unsigned int index;
+                int valid = 1;
+
+                for (index = 0; index < length; ++index)
+                {
+                    if (source[index] > 255)
+                    {
+                        valid = 0;
+                        break;
+                    }
+                    buffer[index] = (unsigned char)source[index];
+                }
+                saved_stack[11] = valid
+                    ? (unsigned int)process_stream_write(
+                        process,
+                        saved_stack[8],
+                        buffer,
+                        length)
+                    : (unsigned int)-1;
+            }
+        }
+    }
     else if (syscall_number == PROCESS_SERVICE_READ_PIPE)
     {
         unsigned int capacity = saved_stack[9];
@@ -1050,13 +1215,15 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             }
         }
     }
-    else if (syscall_number == PROCESS_SERVICE_WRITE_CHARACTER &&
-        process->output_pipe != 0)
+    else if (syscall_number == PROCESS_SERVICE_WRITE_CHARACTER)
     {
         unsigned char character = (unsigned char)saved_stack[8];
 
-        if (!process_pipe_write(
-            process->output_pipe, &character, 1))
+        if (process_stream_write(
+            process,
+            process->standard_output_handle,
+            &character,
+            1) < 0)
         {
             terminal_write(
                 "process: pipe buffer full or reader closed; terminating.\n");
@@ -1065,17 +1232,9 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         saved_stack[11] = 0;
     }
     else if (syscall_number >= PROCESS_SERVICE_CLOCK &&
-        syscall_number <= PROCESS_SERVICE_WRITE_CHARACTER)
+        syscall_number < PROCESS_SERVICE_WRITE_CHARACTER)
     {
-        if (syscall_number == PROCESS_SERVICE_WRITE_CHARACTER)
-        {
-            process_service_write_character(
-                (char)saved_stack[8]);
-        }
-        else
-        {
-            shell_run_service(syscall_number, process->arguments);
-        }
+        shell_run_service(syscall_number, process->arguments);
         saved_stack[11] = 0;
     }
     else if (syscall_number == PROCESS_SYSCALL_EXIT)
@@ -1120,10 +1279,30 @@ void process_keyboard_scancode(unsigned char scancode)
     {
         Process *process = &processes[slot];
         unsigned char next;
+        unsigned char next_input;
+        char character;
 
         if (process->state != TASK_ACTIVE)
         {
             continue;
+        }
+
+        character = keyboard_decode_scancode(
+            scancode,
+            &process->keyboard_shift_pressed,
+            &process->keyboard_caps_lock,
+            &process->keyboard_extended);
+        if (character != '\0')
+        {
+            next_input = (unsigned char)(
+                (process->standard_input_write + 1) &
+                PROCESS_STANDARD_INPUT_QUEUE_MASK);
+            if (next_input != process->standard_input_read)
+            {
+                process->standard_input[process->standard_input_write] =
+                    (unsigned char)character;
+                process->standard_input_write = next_input;
+            }
         }
 
         next = (unsigned char)(

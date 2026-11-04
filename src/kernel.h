@@ -59,7 +59,16 @@ enum ProcessService
     PROCESS_SERVICE_CLOSE_FILE,
     PROCESS_SERVICE_READ_PIPE,
     PROCESS_SERVICE_WRITE_FILE,
-    PROCESS_SERVICE_TRUNCATE_FILE
+    PROCESS_SERVICE_TRUNCATE_FILE,
+    PROCESS_SERVICE_READ_STREAM,
+    PROCESS_SERVICE_WRITE_STREAM
+};
+
+enum ProcessStandardHandle
+{
+    STD_INPUT_HANDLE = 0,
+    STD_OUTPUT_HANDLE,
+    STD_ERROR_HANDLE
 };
 
 void terminal_write_character(char character);
@@ -105,7 +114,6 @@ int memory_translate(
     unsigned int virtual_address,
     unsigned int *physical_address);
 unsigned int memory_available_pages(void);
-void process_service_write_character(char character);
 
 int is_space(char character);
 int command_equals(const char *command, const char *expected);

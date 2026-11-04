@@ -102,9 +102,19 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   only for `B:/` files and cannot exceed their preallocated ext2 blocks.
   `truncate_file(handle)` resets a secondary-disk file's size and stream
   position to zero while retaining its allocated blocks.
-- `read_pipe(buffer)` reads up to 256 bytes from a process's standard input into
-  a local integer array of at least 256 elements. It returns the byte count,
-  `0` while the pipe is temporarily empty, or `-1` when the writer has closed.
+- `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, and `STD_ERROR_HANDLE` are the
+  process's default input, output, and error handles (`0`, `1`, and `2`).
+- `read_stream(handle, buffer)` reads up to 256 bytes into a local integer
+  array of at least 256 elements. Reading `STD_INPUT_HANDLE` returns keyboard
+  characters while a program runs, or pipeline bytes when connected to a pipe.
+  It returns the byte count, `0` when no input is currently available, or
+  `-1` for an invalid handle or closed pipeline input.
+- `write_stream(handle, buffer, length)` writes up to 256 byte values from a
+  local integer array of at least 256 elements. `STD_OUTPUT_HANDLE` and
+  `STD_ERROR_HANDLE` write to the shell terminal; pipeline output redirects
+  only `STD_OUTPUT_HANDLE`. It returns the number of bytes written or `-1`.
+  The existing `print`, `print_char`, and `print_num` builtins use standard
+  output.
 - `clock();`, `memory_report();`, and `process_list();` show the current time,
   memory status, and active processes.
 - `make_directory();` creates a root directory using the command-line arguments

@@ -37,7 +37,9 @@ BUILTINS = {
     "read_arguments": (1, "expression"),
     "read_dir": (2, "expression"),
     "read_file": (2, "expression"),
+    "read_stream": (2, "expression"),
     "write_file": (3, "expression"),
+    "write_stream": (3, "expression"),
     "truncate_file": (1, "expression"),
     "read_pipe": (1, "expression"),
     "random": (1, "expression"),
@@ -73,6 +75,14 @@ PROCESS_SERVICES = {
     "read_pipe": 21,
     "write_file": 22,
     "truncate_file": 23,
+    "read_stream": 24,
+    "write_stream": 25,
+}
+
+STANDARD_HANDLES = {
+    "STD_INPUT_HANDLE": 0,
+    "STD_OUTPUT_HANDLE": 1,
+    "STD_ERROR_HANDLE": 2,
 }
 
 PRECEDENCE = {
@@ -840,7 +850,7 @@ class CodeGenerator:
             self._check_arity(expression, 0)
             self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")
-        elif name in ("read_dir", "read_file"):
+        elif name in ("read_dir", "read_file", "read_stream"):
             self._check_arity(expression, 2)
             self._check_integer_arguments(expression)
             buffer_expression = arguments[1]
@@ -889,6 +899,36 @@ class CodeGenerator:
                 self._error_from_expression(
                     buffer_expression,
                     "write_file buffer must contain at least 256 elements",
+                )
+            self._generate_expression(arguments[0])
+            self._line("    mov ebx, eax")
+            self._line(
+                f"    lea ecx, [ebp{self.array_offsets[buffer_name]:+d}]"
+            )
+            self._generate_expression(arguments[2])
+            self._line("    mov edx, eax")
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
+            self._line("    int 0x80")
+        elif name == "write_stream":
+            self._check_arity(expression, 3)
+            self._check_integer_arguments(expression)
+            buffer_expression = arguments[1]
+            if buffer_expression["kind"] != "variable":
+                self._error_from_expression(
+                    buffer_expression,
+                    "write_stream expects a local array buffer",
+                )
+            buffer_name = buffer_expression["name"]
+            buffer_size = self.array_sizes.get(buffer_name)
+            if buffer_size is None:
+                self._error_from_expression(
+                    buffer_expression,
+                    f"unknown array {buffer_name!r}",
+                )
+            if buffer_size < 256:
+                self._error_from_expression(
+                    buffer_expression,
+                    "write_stream buffer must contain at least 256 elements",
                 )
             self._generate_expression(arguments[0])
             self._line("    mov ebx, eax")
@@ -1022,6 +1062,10 @@ class CodeGenerator:
             )
 
     def _load_variable(self, name, token):
+        standard_handle = STANDARD_HANDLES.get(name)
+        if standard_handle is not None:
+            self._line(f"    mov eax, {standard_handle}")
+            return
         offset = self.local_offsets.get(name)
         if offset is not None:
             self._line(f"    mov eax, [ebp{offset:+d}]")
