@@ -14,6 +14,7 @@
 
 static unsigned char mouse_packet[MOUSE_PACKET_SIZE];
 static unsigned char mouse_packet_index;
+static unsigned char mouse_left_button_pressed;
 static unsigned int mouse_x = VGA_SCREEN_WIDTH / 2;
 static unsigned int mouse_y = VGA_SCREEN_HEIGHT / 2;
 
@@ -139,6 +140,7 @@ void mouse_handle_irq(void)
         mouse_packet[mouse_packet_index++] = value;
         if (mouse_packet_index == MOUSE_PACKET_SIZE)
         {
+            unsigned char buttons = mouse_packet[0];
             int delta_x = (signed char)mouse_packet[1];
             int delta_y = (signed char)mouse_packet[2];
             int next_x;
@@ -166,6 +168,11 @@ void mouse_handle_irq(void)
             mouse_x = (unsigned int)next_x;
             mouse_y = (unsigned int)next_y;
             video_mouse_move(mouse_x, mouse_y);
+            if ((buttons & 0x01) != 0 && !mouse_left_button_pressed)
+            {
+                video_mouse_left_click(mouse_x, mouse_y);
+            }
+            mouse_left_button_pressed = buttons & 0x01;
         }
     }
 

@@ -44,7 +44,11 @@ task's context and returns from the interrupt. This is how the process gets
 CPU time and how the shell resumes between process time slices.
 The PS/2 mouse is initialized in streaming mode and delivers three-byte motion
 packets on IRQ12; the kernel clamps pointer movement to the screen and draws
-the pointer above the desktop and process windows.
+the pointer above the desktop and process windows. The bottom taskbar lists
+the shell and every created graphics window in fixed-width, left-aligned items,
+truncating titles longer than 15 characters to a 12-character prefix plus
+`...`. Left-clicking a taskbar item or visible window brings it to the
+foreground.
 
 Commands normally run in the foreground, and the shell waits for them to exit.
 Appending `&` marks a process as a background task; the shell immediately
