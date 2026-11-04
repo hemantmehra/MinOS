@@ -1,5 +1,6 @@
 #include <intrin.h>
 #include "kernel.h"
+#include "process.h"
 
 #define KEYBOARD_QUEUE_SIZE 64
 #define KEYBOARD_QUEUE_MASK (KEYBOARD_QUEUE_SIZE - 1)

@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "process.h"
 
 #define IDT_ENTRY_COUNT 256
 #define KERNEL_CODE_SELECTOR 0x08

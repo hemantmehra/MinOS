@@ -38,7 +38,9 @@ is drive `A:`.
 All operating-system source code is under `src\`. Kernel code is organized by
 subsystem: `src\kernel.c` handles shell dispatch, `src\video.c` renders the
 VGA terminal, `src\keyboard.c` reads keyboard input, `src\filesystem.c`
-implements ext2 access, `src\interrupts.c` sets up the IDT and keyboard IRQ,
+implements ext2 access, and `src\filesystem_directory.c` handles ext2
+directory creation. The filesystem APIs are declared in `src\filesystem.h`;
+`src\interrupts.c` sets up the IDT and keyboard IRQ,
 `src\time.c` reads the
 CMOS real-time clock, `src\memory.c` initializes x86 paging and manages 4 KiB
 physical pages, and `src\shell_utils.c` provides shared shell helpers. The
@@ -66,13 +68,15 @@ kernel loads images up to 64 KiB from the ext2 root directory. The ext2
 filesystem uses 1 KiB blocks and is stored directly after the boot sector and
 kernel, without an MBR partition table. Kernel services expose directory
 streams and directory creation to the High-language programs.
-`src\programs\hello.high` is
-compiled to `HELLO.EXE` during the build and included in the image. Shared
-interfaces are declared in `src\kernel.h`. The print call uses `EAX=1` and a
-null-terminated string pointer in `EBX`; `EAX=0` exits the process. The
-`hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `cat`, `mkdir`, `clear`,
-`draw`, and `basic` commands are High-language programs which use kernel services for
-OS operations; `echo` remains a built-in shell command.
+`src\programs\hello.high` is compiled to `HELLO.EXE` during the build and
+included in the image. Core interfaces are declared in `src\kernel.h`, process
+interfaces in `src\process.h`, and filesystem interfaces in
+`src\filesystem.h`. The print call uses `EAX=1` and a null-terminated string
+pointer in `EBX`; `EAX=0` exits
+the process. The `hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `cat`,
+`mkdir`, `clear`, `draw`, and `basic` commands are High-language programs
+which use kernel services for OS operations; `echo` remains a built-in shell
+command.
 The shell supports a single pipeline between programs, such as `ls | wc`.
 `src\programs\wc.high` compiles to `WC.EXE` and counts whitespace-separated
 words read from pipeline input.

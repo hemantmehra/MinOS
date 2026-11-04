@@ -1,5 +1,6 @@
 #include <intrin.h>
-#include "kernel.h"
+#include "filesystem.h"
+#include "process.h"
 
 #define PROCESS_LIMIT 8
 #define TASK_LIMIT (PROCESS_LIMIT + 1)

@@ -1,4 +1,6 @@
 #include "kernel.h"
+#include "filesystem.h"
+#include "process.h"
 
 static int parse_pipeline_stage(char **command, char **arguments)
 {
