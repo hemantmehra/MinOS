@@ -363,8 +363,6 @@ void __cdecl kernel_main(void)
     processes_initialize();
     interrupts_initialize();
     kernel_log(KERNEL_LOG_INFO, "kernel", "initialization complete");
-    terminal_write("Hello, world!\n");
-    terminal_write("Enter a command or executable name.\n");
 
     for (;;)
     {

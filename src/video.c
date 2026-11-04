@@ -2,10 +2,21 @@
 #include "kernel.h"
 #include "kernel_log.h"
 
-#define VGA_WIDTH 160
-#define VGA_HEIGHT 45
+#define VGA_WIDTH 144
+#define VGA_HEIGHT 36
 #define VGA_GRAPHICS_WIDTH 1280
 #define VGA_GRAPHICS_HEIGHT 720
+#define SHELL_WINDOW_X 48
+#define SHELL_WINDOW_Y 40
+#define SHELL_WINDOW_WIDTH 1184
+#define SHELL_WINDOW_HEIGHT 640
+#define SHELL_TITLE_HEIGHT 32
+#define SHELL_CONTENT_X 64
+#define SHELL_CONTENT_Y 88
+#define DESKTOP_BACKGROUND_COLOR 7
+#define SHELL_WINDOW_BORDER_COLOR 15
+#define SHELL_TITLE_COLOR 3
+#define SHELL_CONTENT_COLOR 0
 #define VGA_FRAMEBUFFER_SIZE \
     (VGA_GRAPHICS_WIDTH * VGA_GRAPHICS_HEIGHT)
 #define VGA_DOUBLE_BUFFER_SIZE (VGA_FRAMEBUFFER_SIZE * 2)
@@ -42,6 +53,12 @@ static void vga_render_character(
     unsigned char character,
     unsigned char attribute);
 static void vga_fill_screen(unsigned char color);
+static void vga_fill_rectangle(
+    unsigned int x,
+    unsigned int y,
+    unsigned int width,
+    unsigned int height,
+    unsigned char color);
 static void vga_render_terminal(void);
 
 static unsigned short vga_cursor_position(void)
@@ -178,7 +195,7 @@ void terminal_clear(void)
         terminal_cells[index] = 0x0F20;
     }
 
-    vga_fill_screen(0);
+    vga_render_terminal();
     vga_set_cursor_position(0);
 
     __asm
@@ -358,17 +375,36 @@ static void vga_fill_screen(unsigned char color)
     }
 }
 
-static void vga_render_character(
-    unsigned short position,
-    unsigned char character,
-    unsigned char attribute)
+static void vga_fill_rectangle(
+    unsigned int x,
+    unsigned int y,
+    unsigned int width,
+    unsigned int height,
+    unsigned char color)
 {
     unsigned int row;
-    unsigned char foreground = attribute & 0x0F;
-    unsigned char background = attribute >> 4;
-    unsigned int x = (position % VGA_WIDTH) * 8;
-    unsigned int y = (position / VGA_WIDTH) * VGA_TEXT_FONT_HEIGHT;
-    unsigned int column;
+
+    for (row = 0; row < height; ++row)
+    {
+        unsigned int column;
+        volatile unsigned char *destination =
+            vga_framebuffer + (y + row) * VGA_GRAPHICS_WIDTH + x;
+
+        for (column = 0; column < width; ++column)
+        {
+            destination[column] = color;
+        }
+    }
+}
+
+static void vga_render_glyph(
+    unsigned int x,
+    unsigned int y,
+    unsigned char character,
+    unsigned char foreground,
+    unsigned char background)
+{
+    unsigned int row;
 
     if (character >= VGA_TEXT_FONT_CHARACTERS)
     {
@@ -379,24 +415,72 @@ static void vga_render_character(
     {
         unsigned char glyph = vga_text_font[
             character * VGA_TEXT_FONT_HEIGHT + row];
+        unsigned int column;
 
         for (column = 0; column < 8; ++column)
         {
-            unsigned char color =
+            vga_framebuffer[
+                (y + row) * VGA_GRAPHICS_WIDTH + x + column] =
                 (glyph & (0x80 >> column)) != 0
                 ? foreground
                 : background;
-            vga_framebuffer[
-                (y + row) * VGA_GRAPHICS_WIDTH + x + column] = color;
         }
     }
+}
+
+static void vga_render_character(
+    unsigned short position,
+    unsigned char character,
+    unsigned char attribute)
+{
+    unsigned char foreground = attribute & 0x0F;
+    unsigned char background = attribute >> 4;
+    unsigned int x = SHELL_CONTENT_X + (position % VGA_WIDTH) * 8;
+    unsigned int y =
+        SHELL_CONTENT_Y + (position / VGA_WIDTH) * VGA_TEXT_FONT_HEIGHT;
+
+    vga_render_glyph(
+        x, y, character, foreground, background);
 }
 
 static void vga_render_terminal(void)
 {
     unsigned int position;
+    const char *title = "MinOS Shell (always open)";
+    unsigned int title_x = SHELL_WINDOW_X + 16;
+    unsigned int title_y = SHELL_WINDOW_Y + 8;
 
-    vga_fill_screen(0);
+    vga_fill_screen(DESKTOP_BACKGROUND_COLOR);
+    vga_fill_rectangle(
+        SHELL_WINDOW_X,
+        SHELL_WINDOW_Y,
+        SHELL_WINDOW_WIDTH,
+        SHELL_WINDOW_HEIGHT,
+        SHELL_WINDOW_BORDER_COLOR);
+    vga_fill_rectangle(
+        SHELL_WINDOW_X + 1,
+        SHELL_WINDOW_Y + 1,
+        SHELL_WINDOW_WIDTH - 2,
+        SHELL_WINDOW_HEIGHT - 2,
+        SHELL_CONTENT_COLOR);
+    vga_fill_rectangle(
+        SHELL_WINDOW_X + 1,
+        SHELL_WINDOW_Y + 1,
+        SHELL_WINDOW_WIDTH - 2,
+        SHELL_TITLE_HEIGHT,
+        SHELL_TITLE_COLOR);
+    while (*title != '\0')
+    {
+        vga_render_glyph(
+            title_x,
+            title_y,
+            (unsigned char)*title,
+            15,
+            SHELL_TITLE_COLOR);
+        title_x += 8;
+        ++title;
+    }
+
     for (position = 0; position < VGA_WIDTH * VGA_HEIGHT; ++position)
     {
         unsigned short cell = terminal_cells[position];

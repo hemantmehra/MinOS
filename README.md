@@ -32,8 +32,9 @@ running to inspect boot, subsystem, filesystem, and process events. The log is
 preserved and appended across runs.
 
 QEMU opens the kernel with a BIOS-backed PC. The kernel uses a 1280x720 VBE
-framebuffer with a 16-color palette, rendering the shell with bitmap
-characters and a blue `minios>` prompt. The system disk contains an ext2
+framebuffer with a 16-color palette. The desktop has a light-grey wallpaper
+and one fixed, non-closable shell window with a black terminal area and blue
+`minios>` prompt; all commands run from this shell. The system disk contains an ext2
 filesystem populated with project files and directories. A separate 8 MiB
 ext2 data disk is attached as the secondary IDE drive at
 `build\disks\data.img`; its contents persist across normal builds and are
