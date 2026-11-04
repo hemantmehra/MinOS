@@ -37,7 +37,7 @@ and one fixed, non-closable shell window with a black terminal area and blue
 `minios>` prompt; all commands run from this shell. A taskbar at the bottom
 shows the shell and open graphics windows in fixed-width, left-aligned items,
 truncating long titles to 15 characters. Left-click a taskbar item or window
-to bring it to the front.
+to bring it to the front; drag a graphics window by its title bar to move it.
 The system disk contains an ext2
 filesystem populated with project files and directories. A separate 8 MiB
 ext2 data disk is attached as the secondary IDE drive at

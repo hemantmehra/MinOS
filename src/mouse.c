@@ -117,7 +117,7 @@ int mouse_initialize(void)
     }
 
     mouse_packet_index = 0;
-    video_mouse_move(mouse_x, mouse_y);
+    video_mouse_move(mouse_x, mouse_y, 0);
     return 1;
 }
 
@@ -167,7 +167,7 @@ void mouse_handle_irq(void)
             }
             mouse_x = (unsigned int)next_x;
             mouse_y = (unsigned int)next_y;
-            video_mouse_move(mouse_x, mouse_y);
+            video_mouse_move(mouse_x, mouse_y, buttons & 0x01);
             if ((buttons & 0x01) != 0 && !mouse_left_button_pressed)
             {
                 video_mouse_left_click(mouse_x, mouse_y);

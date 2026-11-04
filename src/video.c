@@ -91,6 +91,9 @@ static GraphicsWindow graphics_windows[GRAPHICS_WINDOW_LIMIT];
 static unsigned int window_stack[GRAPHICS_WINDOW_LIMIT];
 static unsigned int window_stack_count;
 static int active_window_slot = -1;
+static int dragging_window_slot = -1;
+static unsigned int mouse_drag_offset_x;
+static unsigned int mouse_drag_offset_y;
 static unsigned char shell_window_active = 1;
 static unsigned char shell_graphics_active;
 static unsigned int mouse_pointer_x = VGA_GRAPHICS_WIDTH / 2;
@@ -1274,6 +1277,10 @@ int video_destroy_window(
         return 0;
     }
     slot = window_handle - 1;
+    if (dragging_window_slot == (int)slot)
+    {
+        dragging_window_slot = -1;
+    }
     window->visible = 0;
     graphics_window_remove_from_stack(slot);
     if (active_window_slot == (int)slot)
@@ -1540,6 +1547,10 @@ void video_end_graphics(
 
         if (graphics_window_lookup(owner_process_id, window_handle, &window))
         {
+            if (dragging_window_slot == (int)(window_handle - 1))
+            {
+                dragging_window_slot = -1;
+            }
             window->visible = 0;
             if (active_window_slot == (int)(window_handle - 1))
             {
@@ -1567,7 +1578,10 @@ void video_terminal_restore(void)
     vga_back_buffer = vga_framebuffer + VGA_FRAMEBUFFER_SIZE;
 }
 
-void video_mouse_move(unsigned int x, unsigned int y)
+void video_mouse_move(
+    unsigned int x,
+    unsigned int y,
+    unsigned char left_button_pressed)
 {
     unsigned int page;
 
@@ -1575,6 +1589,43 @@ void video_mouse_move(unsigned int x, unsigned int y)
     vga_restore_mouse_pointer(1);
     mouse_pointer_x = x;
     mouse_pointer_y = y;
+
+    if (!left_button_pressed)
+    {
+        dragging_window_slot = -1;
+    }
+    else if (dragging_window_slot >= 0)
+    {
+        GraphicsWindow *window =
+            &graphics_windows[dragging_window_slot];
+        unsigned int next_x = x >= mouse_drag_offset_x
+            ? x - mouse_drag_offset_x
+            : 0;
+        unsigned int next_y = y >= mouse_drag_offset_y
+            ? y - mouse_drag_offset_y
+            : 0;
+        unsigned int maximum_x =
+            VGA_GRAPHICS_WIDTH - window->width - 4;
+        unsigned int maximum_y =
+            TASKBAR_Y - window->height - SHELL_TITLE_HEIGHT - 4;
+
+        if (next_x > maximum_x)
+        {
+            next_x = maximum_x;
+        }
+        if (next_y > maximum_y)
+        {
+            next_y = maximum_y;
+        }
+        if (window->x != next_x || window->y != next_y)
+        {
+            window->x = next_x;
+            window->y = next_y;
+            vga_redraw_desktop();
+            return;
+        }
+    }
+
     for (page = 0; page < 2; ++page)
     {
         vga_render_mouse_pointer_to(
@@ -1632,6 +1683,13 @@ void video_mouse_left_click(unsigned int x, unsigned int y)
                 graphics_window_bring_to_front(slot);
                 active_window_slot = (int)slot;
                 shell_window_active = 0;
+                if (y >= window->y + 1 &&
+                    y < window->y + SHELL_TITLE_HEIGHT + 1)
+                {
+                    dragging_window_slot = (int)slot;
+                    mouse_drag_offset_x = x - window->x;
+                    mouse_drag_offset_y = y - window->y;
+                }
                 vga_redraw_desktop();
                 return;
             }

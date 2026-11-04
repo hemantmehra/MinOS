@@ -29,7 +29,10 @@ void video_draw_pixel(
 void video_present_graphics(
     unsigned int owner_process_id,
     unsigned int window_handle);
-void video_mouse_move(unsigned int x, unsigned int y);
+void video_mouse_move(
+    unsigned int x,
+    unsigned int y,
+    unsigned char left_button_pressed);
 void video_mouse_left_click(unsigned int x, unsigned int y);
 unsigned int video_create_window(
     unsigned int owner_process_id,
