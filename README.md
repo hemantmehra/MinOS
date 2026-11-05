@@ -69,7 +69,7 @@ QEMU appends structured kernel logs from the debug console to
 **Executables and toolchain**
 - `MEXE` format: a 12-byte header (`MEXE`, 32-bit image size, 32-bit entry
   offset) followed by flat, relocatable 32-bit code; images up to 64 KiB are
-  loaded from the ext2 root directory.
+  loaded from the ext2 image (`build.py` installs them in `A:/Programs`).
 - All programs under `src\programs\*.c` are built by `build.py` with
   **minc** (`tools\minc.py`), a minimal C compiler that preprocesses
   `#include`, flag `#define` and `#ifndef/#ifdef/#endif`, generates NASM
@@ -82,8 +82,12 @@ QEMU appends structured kernel logs from the debug console to
   `++`/`--`.
 
 **Shell**
-- Built-in `echo`; every other command is a program in the image, run by
-  name with or without `.EXE`.
+- Built-in `echo` and `set`; every other command is a program, run by name
+  with or without `.EXE`.
+- Programs are installed in `A:/Programs`. The shell searches the current
+  directory first, then each directory of its `PATH` variable (default
+  `A:/Programs`, `;`-separated, left to right). Names containing `/` or `:`
+  are used as given. `set` prints `PATH`; `set PATH=dir;dir` changes it.
 - Command-line arguments, `&` for background jobs and a single `|` pipeline.
 
 ## Tools and layout

@@ -241,7 +241,7 @@ def main():
     ]
     for executable in executables:
         disk_command.extend(
-            ["--extra-file", executable.name, str(executable)]
+            ["--extra-file", f"Programs/{executable.name}", str(executable)]
         )
     result = subprocess.run(disk_command, check=False)
     if result.returncode != 0:

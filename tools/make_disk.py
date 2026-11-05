@@ -265,15 +265,32 @@ def populate_ext2(volume, files_root, extra_files=()):
     root = build_directory(files_root, "/")
     root.inode = EXT2_ROOT_INODE
     root.parent_inode = EXT2_ROOT_INODE
-    used_names = {child.name for child in root.children}
+    used_paths = set()
     for name, path in extra_files:
-        validate_name(name)
-        if name in used_names:
-            raise ValueError(f"Extra disk file {name!r} conflicts with a workspace file.")
+        # Names may contain "/" to place the file in a (created) subdirectory.
+        parts = name.split("/")
+        for part in parts:
+            validate_name(part)
         if not path.is_file():
             raise ValueError(f"Extra disk file does not exist: {path}")
-        used_names.add(name)
-        root.children.append(File(path, name, path.read_bytes()))
+        parent = root
+        for part in parts[:-1]:
+            match = next(
+                (child for child in parent.children if child.name == part),
+                None,
+            )
+            if match is None:
+                match = Directory(None, part)
+                parent.children.append(match)
+            elif not isinstance(match, Directory):
+                raise ValueError(f"Extra disk path {name!r} conflicts with a file.")
+            parent = match
+        if name in used_paths or any(
+            child.name == parts[-1] for child in parent.children
+        ):
+            raise ValueError(f"Extra disk file {name!r} conflicts with a workspace file.")
+        used_paths.add(name)
+        parent.children.append(File(path, parts[-1], path.read_bytes()))
 
     nodes = []
     assign_inode_children(root, EXT2_FIRST_DYNAMIC_INODE, nodes)

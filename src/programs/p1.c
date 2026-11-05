@@ -4,7 +4,7 @@
 int main() {
     printf("P1: starting\n");
 
-    int child = create_process("P2.EXE");
+    int child = create_process("A:/Programs/P2.EXE");
     if (child > 0) {
         printf("P1: waiting for P2\n");
         if (wait_process(child) == 1) {

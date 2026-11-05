@@ -166,7 +166,7 @@ void __cdecl kernel_main(void)
         {
         }
 
-        result = process_start("SHELL.EXE", "", &process_id, 0);
+        result = process_start("A:/Programs/SHELL.EXE", "", &process_id, 0);
         if (result != PROCESS_START_OK)
         {
             kernel_log_value(

@@ -721,6 +721,7 @@ enum ProcessStartResult process_start(
     unsigned int stack_top;
     unsigned int *stack;
     unsigned int argument_length = 0;
+    unsigned int base_start = 0;
     enum FileReadResult read_result;
     Process *process = 0;
 
@@ -919,10 +920,17 @@ enum ProcessStartResult process_start(
         next_process_id = 1;
     }
     process->process_id = pid;
-    for (index = 0; index < sizeof(process->name) - 1 &&
-        filename[index] != '\0'; ++index)
+    for (index = 0; filename[index] != '\0'; ++index)
     {
-        process->name[index] = filename[index];
+        if (filename[index] == '/' || filename[index] == ':')
+        {
+            base_start = index + 1;
+        }
+    }
+    for (index = 0; index < sizeof(process->name) - 1 &&
+        filename[base_start + index] != '\0'; ++index)
+    {
+        process->name[index] = filename[base_start + index];
     }
     process->name[index] = '\0';
 
