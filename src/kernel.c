@@ -164,6 +164,17 @@ void __cdecl kernel_main(void)
     {
         while (process_has_foreground_process())
         {
+            unsigned int request = video_take_launch_request();
+            unsigned int close_id = video_take_close_request();
+
+            if (close_id != 0)
+            {
+                process_kill_by_id(close_id);
+            }
+            if (request == 1)
+            {
+                process_start("A:/Programs/BALL.EXE", "", &process_id, 0);
+            }
         }
 
         result = process_start("A:/Programs/SHELL.EXE", "", &process_id, 0);

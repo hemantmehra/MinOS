@@ -52,6 +52,10 @@ QEMU appends structured kernel logs from the debug console to
 - Desktop with a light-grey wallpaper, a fixed non-closable shell window and a
   taskbar showing every window in fixed-width, left-aligned items (titles are
   truncated to 15 characters).
+- A **Start** button at the bottom left of the taskbar opens a menu with
+  `shell` (focus the shell window) and `ball` (start the bouncing-ball
+  program in a new window). Program windows have a red close button at the
+  right of the title bar that ends the program.
 - Per-process window handles: programs create windows and draw into them, and
   a process without a window cannot enter graphics mode.
 - PS/2 mouse pointer; left-click to raise a window or select it from the

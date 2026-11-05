@@ -70,6 +70,7 @@ int process_has_active_process(void);
 int process_has_foreground_process(void);
 int process_kill_by_name(
     unsigned int caller_process_id, const char *name);
+int process_kill_by_id(unsigned int process_id);
 unsigned char process_keyboard_read_scancode(void);
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack);
 unsigned int __cdecl process_system_call(unsigned int *saved_stack);

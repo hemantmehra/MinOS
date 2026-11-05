@@ -22,6 +22,11 @@
 #define TASKBAR_HEIGHT 32
 #define TASKBAR_Y (VGA_GRAPHICS_HEIGHT - TASKBAR_HEIGHT)
 #define TASKBAR_ITEM_WIDTH 128
+#define START_BUTTON_WIDTH 72
+#define START_MENU_WIDTH 136
+#define START_MENU_ITEM_HEIGHT 32
+#define START_MENU_ITEM_COUNT 2
+#define CLOSE_BUTTON_SIZE 24
 #define TASKBAR_ITEM_COUNT (GRAPHICS_WINDOW_LIMIT + 1)
 #define TASKBAR_TITLE_MAX_LENGTH 15
 #define TASKBAR_TITLE_PREFIX_LENGTH (TASKBAR_TITLE_MAX_LENGTH - 3)
@@ -94,6 +99,9 @@ static int active_window_slot = -1;
 static int dragging_window_slot = -1;
 static unsigned int mouse_drag_offset_x;
 static unsigned int mouse_drag_offset_y;
+static unsigned char start_menu_open;
+static volatile unsigned int pending_launch_request;
+static volatile unsigned int pending_close_request;
 static unsigned char shell_window_active = 1;
 static unsigned char shell_graphics_active;
 static unsigned int mouse_pointer_x = VGA_GRAPHICS_WIDTH / 2;
@@ -263,6 +271,76 @@ static void graphics_activate_top_window(void)
     shell_window_active = 1;
 }
 
+static void vga_render_text_to(
+    volatile unsigned char *target,
+    unsigned int x,
+    unsigned int y,
+    const char *text,
+    unsigned char foreground,
+    unsigned char background)
+{
+    while (*text != '\0')
+    {
+        vga_render_glyph_to(
+            target, x, y, (unsigned char)*text, foreground, background);
+        x += 8;
+        ++text;
+    }
+}
+
+static void vga_render_start_ui_to(volatile unsigned char *target)
+{
+    static const char *const menu_items[START_MENU_ITEM_COUNT] =
+        { "shell", "ball" };
+    unsigned int item;
+    unsigned char button_color = start_menu_open
+        ? SHELL_TITLE_COLOR
+        : DESKTOP_BACKGROUND_COLOR;
+
+    vga_fill_rectangle_to(
+        target,
+        2,
+        TASKBAR_Y + 3,
+        START_BUTTON_WIDTH - 4,
+        TASKBAR_HEIGHT - 6,
+        button_color);
+    vga_render_text_to(
+        target,
+        2 + (START_BUTTON_WIDTH - 4 - 5 * 8) / 2,
+        TASKBAR_Y + 8,
+        "Start",
+        start_menu_open ? 15 : 0,
+        button_color);
+
+    if (!start_menu_open)
+    {
+        return;
+    }
+
+    vga_fill_rectangle_to(
+        target,
+        0,
+        TASKBAR_Y - START_MENU_ITEM_COUNT * START_MENU_ITEM_HEIGHT - 2,
+        START_MENU_WIDTH,
+        START_MENU_ITEM_COUNT * START_MENU_ITEM_HEIGHT + 2,
+        SHELL_WINDOW_BORDER_COLOR);
+    for (item = 0; item < START_MENU_ITEM_COUNT; ++item)
+    {
+        unsigned int y = TASKBAR_Y -
+            (START_MENU_ITEM_COUNT - item) * START_MENU_ITEM_HEIGHT;
+
+        vga_fill_rectangle_to(
+            target,
+            1,
+            y,
+            START_MENU_WIDTH - 2,
+            START_MENU_ITEM_HEIGHT - 1,
+            DESKTOP_BACKGROUND_COLOR);
+        vga_render_text_to(
+            target, 12, y + 8, menu_items[item], 0, DESKTOP_BACKGROUND_COLOR);
+    }
+}
+
 static void vga_render_taskbar_to(volatile unsigned char *target)
 {
     unsigned int count = taskbar_item_count();
@@ -286,7 +364,7 @@ static void vga_render_taskbar_to(volatile unsigned char *target)
     for (item = 0; item < count; ++item)
     {
         int slot = taskbar_window_slot(item);
-        unsigned int x = item * TASKBAR_ITEM_WIDTH;
+        unsigned int x = START_BUTTON_WIDTH + item * TASKBAR_ITEM_WIDTH;
         unsigned int width = TASKBAR_ITEM_WIDTH;
         unsigned char selected = slot < 0
             ? shell_window_active
@@ -339,6 +417,8 @@ static void vga_render_taskbar_to(volatile unsigned char *target)
                 button_color);
         }
     }
+
+    vga_render_start_ui_to(target);
 }
 
 static void vga_render_shell_graphics_chrome_to(
@@ -1165,7 +1245,7 @@ static void vga_render_windows_to(volatile unsigned char *target)
             const char *title = window->title;
 
             while (*title != '\0' &&
-                title_x + 8 < window->x + window->width)
+                title_x + 8 < window->x + window->width - CLOSE_BUTTON_SIZE)
             {
                 vga_render_glyph_to(
                     target,
@@ -1178,6 +1258,20 @@ static void vga_render_windows_to(volatile unsigned char *target)
                 ++title;
             }
         }
+        vga_fill_rectangle_to(
+            target,
+            window->x + window->width + 3 - CLOSE_BUTTON_SIZE - 4,
+            window->y + 5,
+            CLOSE_BUTTON_SIZE,
+            CLOSE_BUTTON_SIZE,
+            12);
+        vga_render_glyph_to(
+            target,
+            window->x + window->width + 3 - CLOSE_BUTTON_SIZE - 4 + 8,
+            window->y + 9,
+            'X',
+            15,
+            12);
         for (row = 0; row < window->height; ++row)
         {
             unsigned int column;
@@ -1670,11 +1764,53 @@ void video_mouse_left_click(unsigned int x, unsigned int y)
 {
     unsigned int count;
 
+    if (start_menu_open)
+    {
+        unsigned int menu_top =
+            TASKBAR_Y - START_MENU_ITEM_COUNT * START_MENU_ITEM_HEIGHT;
+
+        start_menu_open = 0;
+        if (x < START_MENU_WIDTH && y >= menu_top && y < TASKBAR_Y)
+        {
+            unsigned int item = (y - menu_top) / START_MENU_ITEM_HEIGHT;
+
+            if (item == 0)
+            {
+                shell_window_active = 1;
+                active_window_slot = -1;
+            }
+            else
+            {
+                pending_launch_request = item;
+            }
+        }
+        else if (y >= TASKBAR_Y && x < START_BUTTON_WIDTH)
+        {
+            vga_redraw_desktop();
+            return;
+        }
+        else
+        {
+            vga_redraw_desktop();
+            video_mouse_left_click(x, y);
+            return;
+        }
+        vga_redraw_desktop();
+        return;
+    }
+
     if (y >= TASKBAR_Y)
     {
         unsigned int item;
         int slot;
 
+        if (x < START_BUTTON_WIDTH)
+        {
+            start_menu_open = 1;
+            vga_redraw_desktop();
+            return;
+        }
+        x -= START_BUTTON_WIDTH;
         count = taskbar_item_count();
         if (x >= count * TASKBAR_ITEM_WIDTH)
         {
@@ -1716,7 +1852,15 @@ void video_mouse_left_click(unsigned int x, unsigned int y)
                 graphics_window_bring_to_front(slot);
                 active_window_slot = (int)slot;
                 shell_window_active = 0;
-                if (y >= window->y + 1 &&
+                if (x >= window->x + window->width + 3 -
+                        CLOSE_BUTTON_SIZE - 4 &&
+                    x < window->x + window->width + 3 - 4 &&
+                    y >= window->y + 5 &&
+                    y < window->y + 5 + CLOSE_BUTTON_SIZE)
+                {
+                    pending_close_request = window->owner_process_id;
+                }
+                else if (y >= window->y + 1 &&
                     y < window->y + SHELL_TITLE_HEIGHT + 1)
                 {
                     dragging_window_slot = (int)slot;
@@ -1732,6 +1876,22 @@ void video_mouse_left_click(unsigned int x, unsigned int y)
     shell_window_active = 1;
     active_window_slot = -1;
     vga_redraw_desktop();
+}
+
+unsigned int video_take_launch_request(void)
+{
+    unsigned int request = pending_launch_request;
+
+    pending_launch_request = 0;
+    return request;
+}
+
+unsigned int video_take_close_request(void)
+{
+    unsigned int request = pending_close_request;
+
+    pending_close_request = 0;
+    return request;
 }
 
 void terminal_write_unsigned(unsigned int value)

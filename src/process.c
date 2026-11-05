@@ -1824,6 +1824,26 @@ int process_kill_by_name(
     return 0;
 }
 
+int process_kill_by_id(unsigned int process_id)
+{
+    unsigned int flags = disable_interrupts();
+    unsigned int slot;
+    int killed = 0;
+
+    for (slot = 1; slot < TASK_LIMIT; ++slot)
+    {
+        if (processes[slot].state == TASK_ACTIVE &&
+            processes[slot].process_id == process_id)
+        {
+            process_terminate(&processes[slot]);
+            killed = 1;
+            break;
+        }
+    }
+    restore_interrupts(flags);
+    return killed;
+}
+
 void process_list(void)
 {
     unsigned int flags = disable_interrupts();
