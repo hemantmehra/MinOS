@@ -61,6 +61,21 @@ int memory_map_page(
 int memory_unmap_page(
     unsigned int virtual_address,
     unsigned int *physical_address);
+int memory_map_page_in(
+    unsigned int directory_address,
+    unsigned int virtual_address,
+    unsigned int physical_address,
+    unsigned int flags);
+int memory_unmap_page_in(
+    unsigned int directory_address,
+    unsigned int virtual_address,
+    unsigned int *physical_address);
+unsigned int memory_kernel_address_space(void);
+unsigned int memory_current_address_space(void);
+void memory_switch_address_space(unsigned int directory_address);
+unsigned int memory_create_address_space(void);
+void memory_destroy_address_space(unsigned int directory_address);
+void interrupts_set_kernel_stack(unsigned int stack_top);
 int memory_translate(
     unsigned int virtual_address,
     unsigned int *physical_address);

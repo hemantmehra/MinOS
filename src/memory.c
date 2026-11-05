@@ -13,6 +13,12 @@
 #define PAGE_WRITABLE 0x002
 #define PAGE_USER 0x004
 #define PAGE_ALLOWED_FLAGS (PAGE_WRITABLE | PAGE_USER)
+#define KERNEL_SHARED_BASE 0xC0000000
+#define PROCESS_TABLE_REGION 0xC0000000
+#define PROCESS_TABLE_REGION_SIZE 0x01000000
+#define FRAMEBUFFER_REGION 0xD0000000
+#define WINDOW_REGION 0xE0000000
+#define WINDOW_REGION_SIZE 0x00800000
 
 __declspec(align(4096))
 static unsigned int page_directory[PAGE_DIRECTORY_ENTRIES];
@@ -79,6 +85,35 @@ void memory_initialize(void)
         mark_page_allocated(page);
     }
 
+    /* Kernel page tables above KERNEL_SHARED_BASE are created up front so
+       every address space copies the same tables and sees later mappings. */
+    for (directory_index = KERNEL_SHARED_BASE >> 22;
+        directory_index < PAGE_DIRECTORY_ENTRIES;
+        ++directory_index)
+    {
+        unsigned int base = directory_index << 22;
+
+        if ((base >= PROCESS_TABLE_REGION &&
+                base < PROCESS_TABLE_REGION + PROCESS_TABLE_REGION_SIZE) ||
+            (base >= 0xC1000000 && base < 0xC1400000) ||
+            base == FRAMEBUFFER_REGION ||
+            (base >= WINDOW_REGION && base < WINDOW_REGION + WINDOW_REGION_SIZE))
+        {
+            unsigned int table_address = memory_allocate_page();
+            volatile unsigned int *page_table =
+                (volatile unsigned int *)table_address;
+
+            for (table_index = 0;
+                table_index < PAGE_TABLE_ENTRIES;
+                ++table_index)
+            {
+                page_table[table_index] = 0;
+            }
+            directory[directory_index] =
+                table_address | PAGE_PRESENT | PAGE_WRITABLE;
+        }
+    }
+
     __asm
     {
         mov eax, offset page_directory
@@ -128,11 +163,13 @@ int memory_free_page(unsigned int physical_address)
     return 1;
 }
 
-int memory_map_page(
+int memory_map_page_in(
+    unsigned int directory_address,
     unsigned int virtual_address,
     unsigned int physical_address,
     unsigned int flags)
 {
+    unsigned int *page_directory = (unsigned int *)directory_address;
     unsigned int directory_index = virtual_address >> 22;
     unsigned int table_index = (virtual_address >> 12) & 0x3FF;
     unsigned int *page_table;
@@ -185,10 +222,24 @@ int memory_map_page(
     return 1;
 }
 
-int memory_unmap_page(
+int memory_map_page(
+    unsigned int virtual_address,
+    unsigned int physical_address,
+    unsigned int flags)
+{
+    return memory_map_page_in(
+        (unsigned int)page_directory,
+        virtual_address,
+        physical_address,
+        flags);
+}
+
+int memory_unmap_page_in(
+    unsigned int directory_address,
     unsigned int virtual_address,
     unsigned int *physical_address)
 {
+    unsigned int *page_directory = (unsigned int *)directory_address;
     unsigned int directory_index = virtual_address >> 22;
     unsigned int table_index = (virtual_address >> 12) & 0x3FF;
     unsigned int *page_table;
@@ -214,6 +265,92 @@ int memory_unmap_page(
     page_table[table_index] = 0;
     __invlpg((void *)virtual_address);
     return 1;
+}
+
+int memory_unmap_page(
+    unsigned int virtual_address,
+    unsigned int *physical_address)
+{
+    return memory_unmap_page_in(
+        (unsigned int)page_directory, virtual_address, physical_address);
+}
+
+unsigned int memory_kernel_address_space(void)
+{
+    return (unsigned int)page_directory;
+}
+
+unsigned int memory_current_address_space(void)
+{
+    return __readcr3();
+}
+
+void memory_switch_address_space(unsigned int directory_address)
+{
+    if (__readcr3() != directory_address)
+    {
+        __writecr3(directory_address);
+    }
+}
+
+/* A new address space shares the kernel mappings (identity-mapped RAM and
+   the regions from KERNEL_SHARED_BASE up) but has no user mappings. */
+unsigned int memory_create_address_space(void)
+{
+    unsigned int directory_address = memory_allocate_page();
+    volatile unsigned int *directory = (volatile unsigned int *)directory_address;
+    unsigned int index;
+
+    if (directory_address == 0)
+    {
+        return 0;
+    }
+    for (index = 0; index < PAGE_DIRECTORY_ENTRIES; ++index)
+    {
+        if (index < 4 || index >= (KERNEL_SHARED_BASE >> 22))
+        {
+            directory[index] = page_directory[index];
+        }
+        else
+        {
+            directory[index] = 0;
+        }
+    }
+    return directory_address;
+}
+
+/* Frees every user page, user page table and the directory itself. */
+void memory_destroy_address_space(unsigned int directory_address)
+{
+    unsigned int *directory = (unsigned int *)directory_address;
+    unsigned int directory_index;
+    unsigned int table_index;
+
+    memory_switch_address_space((unsigned int)page_directory);
+    for (directory_index = 4;
+        directory_index < (KERNEL_SHARED_BASE >> 22);
+        ++directory_index)
+    {
+        unsigned int *page_table;
+
+        if ((directory[directory_index] & PAGE_PRESENT) == 0)
+        {
+            continue;
+        }
+        page_table = (unsigned int *)(
+            directory[directory_index] & ~(PAGE_SIZE - 1));
+        for (table_index = 0;
+            table_index < PAGE_TABLE_ENTRIES;
+            ++table_index)
+        {
+            if ((page_table[table_index] & PAGE_PRESENT) != 0)
+            {
+                memory_free_page(page_table[table_index] & ~(PAGE_SIZE - 1));
+            }
+        }
+        memory_free_page((unsigned int)page_table);
+    }
+    memory_free_page(directory_address);
 }
 
 int memory_translate(

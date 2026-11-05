@@ -34,6 +34,68 @@ typedef struct
 static InterruptGate interrupt_table[IDT_ENTRY_COUNT];
 static InterruptDescriptor interrupt_descriptor;
 
+#pragma pack(push, 1)
+typedef struct
+{
+    unsigned short limit_low;
+    unsigned short base_low;
+    unsigned char base_middle;
+    unsigned char access;
+    unsigned char granularity;
+    unsigned char base_high;
+} GdtEntry;
+#pragma pack(pop)
+
+static GdtEntry gdt[6];
+static InterruptDescriptor gdt_descriptor;
+static unsigned int task_state_segment[26];
+
+static void gdt_set_entry(
+    unsigned int index,
+    unsigned int base,
+    unsigned int limit,
+    unsigned char access,
+    unsigned char granularity)
+{
+    gdt[index].limit_low = (unsigned short)limit;
+    gdt[index].base_low = (unsigned short)base;
+    gdt[index].base_middle = (unsigned char)(base >> 16);
+    gdt[index].access = access;
+    gdt[index].granularity =
+        (unsigned char)(granularity | ((limit >> 16) & 0x0F));
+    gdt[index].base_high = (unsigned char)(base >> 24);
+}
+
+/* Entries 1 and 2 match the boot GDT, so loaded segment registers stay
+   valid. Selectors 0x1B and 0x23 are the ring 3 code and data segments. */
+static void gdt_initialize(void)
+{
+    gdt_set_entry(0, 0, 0, 0, 0);
+    gdt_set_entry(1, 0, 0xFFFFF, 0x9A, 0xC0);
+    gdt_set_entry(2, 0, 0xFFFFF, 0x92, 0xC0);
+    gdt_set_entry(3, 0, 0xFFFFF, 0xFA, 0xC0);
+    gdt_set_entry(4, 0, 0xFFFFF, 0xF2, 0xC0);
+    gdt_set_entry(
+        5, (unsigned int)task_state_segment, sizeof(task_state_segment) - 1,
+        0x89, 0x00);
+    task_state_segment[2] = KERNEL_DATA_SELECTOR;
+    task_state_segment[25] = sizeof(task_state_segment) << 16;
+
+    gdt_descriptor.limit = sizeof(gdt) - 1;
+    gdt_descriptor.base = (unsigned int)gdt;
+    __asm
+    {
+        lgdt fword ptr [gdt_descriptor]
+        mov ax, 0x28
+        ltr ax
+    }
+}
+
+void interrupts_set_kernel_stack(unsigned int stack_top)
+{
+    task_state_segment[1] = stack_top;
+}
+
 static void __declspec(naked) interrupt_halt(void)
 {
     __asm
@@ -42,6 +104,71 @@ static void __declspec(naked) interrupt_halt(void)
     interrupt_halt_loop:
         hlt
         jmp interrupt_halt_loop
+    }
+}
+
+static void __declspec(naked) exception_common(void)
+{
+    __asm
+    {
+        pushad
+        push ds
+        push es
+        push fs
+        push gs
+        mov ax, KERNEL_DATA_SELECTOR
+        mov ds, ax
+        mov es, ax
+        mov fs, ax
+        mov gs, ax
+        push esp
+        call process_handle_exception
+        add esp, 4
+        mov esp, eax
+        pop gs
+        pop fs
+        pop es
+        pop ds
+        popad
+        iretd
+    }
+}
+
+static void __declspec(naked) exception_divide_stub(void)
+{
+    __asm
+    {
+        push 0
+        push 0
+        jmp exception_common
+    }
+}
+
+static void __declspec(naked) exception_invalid_opcode_stub(void)
+{
+    __asm
+    {
+        push 0
+        push 6
+        jmp exception_common
+    }
+}
+
+static void __declspec(naked) exception_general_protection_stub(void)
+{
+    __asm
+    {
+        push 13
+        jmp exception_common
+    }
+}
+
+static void __declspec(naked) exception_page_fault_stub(void)
+{
+    __asm
+    {
+        push 14
+        jmp exception_common
     }
 }
 
@@ -196,6 +323,12 @@ void interrupts_initialize(void)
     interrupt_set_gate(0x2C, mouse_irq_stub);
     interrupt_set_gate(0x20, timer_irq_stub);
     interrupt_set_gate(0x80, system_call_stub);
+    interrupt_table[0x80].flags = 0xEE;
+    interrupt_set_gate(0, exception_divide_stub);
+    interrupt_set_gate(6, exception_invalid_opcode_stub);
+    interrupt_set_gate(13, exception_general_protection_stub);
+    interrupt_set_gate(14, exception_page_fault_stub);
+    gdt_initialize();
 
     interrupt_descriptor.limit = sizeof(interrupt_table) - 1;
     interrupt_descriptor.base = (unsigned int)interrupt_table;

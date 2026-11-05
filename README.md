@@ -37,8 +37,11 @@ QEMU appends structured kernel logs from the debug console to
 
 **Processes**
 - Preemptive round-robin scheduler that saves and restores full register,
-  segment and interrupt contexts. Processes run in ring 0 in the kernel
-  address space; they are not privilege-isolated.
+  segment and interrupt contexts. Every program runs in ring 3 in its own
+  address space (a private page directory sharing only the kernel mappings,
+  which user code cannot access); a fault terminates just that program.
+- The process table grows on demand, so the number of processes is limited
+  only by free memory.
 - The kernel starts the shell as an ordinary program (`SHELL.EXE`) and
   restarts it if it exits. The shell parses commands and uses the
   `start_process` and `wait_process` services to run other programs.

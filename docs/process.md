@@ -4,8 +4,10 @@ MinOS runs each executable as one schedulable thread. The kernel starts
 `SHELL.EXE` (built from `src/programs/shell.c`) at boot as an ordinary
 foreground process, and restarts it if it ever exits. The kernel's own
 scheduler task (task 0, named `kernel`) only idles and supervises the shell.
-Processes currently run in ring 0 and share the kernel address space; they are
-not isolated from the kernel or from one another.
+Every process runs in ring 3 in its own address space. The kernel runs each
+process's system calls and interrupts on a per-process kernel stack (selected
+through the TSS), and a ring 3 fault (for example touching kernel memory)
+terminates only the faulting process.
 
 ## Starting a process
 
@@ -20,26 +22,29 @@ schedule a partially initialized task.
 
 The loader then:
 
-1. Finds an unused process slot. The kernel supports up to nine processes,
-   including the shell program.
-2. Reserves a 2 MiB virtual-address slot starting at `0x40000000`. It allocates
-   physical pages for the executable and a four-page stack, and maps those
-   pages into the process slot.
-3. Reads the root-directory file into the slot. Executables are limited to
+1. Finds an unused process slot, or appends a new one. The process table lives
+   in a shared kernel region and grows on demand, so there is no fixed process
+   limit; starting fails with "no memory" or "process limit" only when physical
+   memory or that region is exhausted. Each slot also holds the process's
+   kernel stack.
+2. Creates a new page directory that shares the kernel mappings, then maps
+   user-accessible pages starting at `0x40000000` for the executable (up to
+   64 KiB) and a four-page stack ending at `0x40200000`. Every process uses
+   the same virtual addresses in its own address space.
+3. Switches to the new address space and reads the root-directory file into
+   it. Executables are limited to
    64 KiB and use the MinOS `MEXE` format: a 12-byte header containing the
    four-byte `MEXE` signature, the total image size, and the entry-point
    offset, followed by 32-bit x86 code and data. The loader checks the
-   signature, file size, and that the entry point is inside the image.
-4. Builds an initial saved CPU context. Its instruction pointer is the
-   executable's load address plus its entry-point offset; its stack pointer
-   is at the top of its stack. The context has kernel code/data selectors and
-   interrupts enabled.
+   signature, file size, and that the entry point is inside the image, and
+   frees pages beyond the image.
+4. Builds an initial saved CPU context on the process's kernel stack. Its
+   instruction pointer is the executable's load address plus its entry-point
+   offset; its stack pointer is near the top of the user stack. The context
+   has ring 3 code/data selectors and interrupts enabled.
 5. Assigns a process ID and marks the task active.
 
-The executable pages are mapped writable, and processes execute in ring 0.
-The current page mappings do not provide privilege isolation; processes share
-the kernel address space and can access kernel memory.
-
+When a process ends, the kernel frees all of its pages and its page directory.
 The shell prints the process name and ID and continues running. The PIT
 generates timer interrupts at 100 Hz. On each tick, the interrupt stub saves
 the current CPU registers and segments on that task's stack. The round-robin

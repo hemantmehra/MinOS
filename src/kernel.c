@@ -5,7 +5,7 @@
 
 static void shell_memory_report(void)
 {
-    const unsigned int test_virtual_address = 0x7F000000;
+    const unsigned int test_virtual_address = 0xC1000000;
     const unsigned int test_value = 0x4D454D31;
     unsigned int physical_address = memory_allocate_page();
     unsigned int translated_address;

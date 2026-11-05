@@ -3,13 +3,18 @@
 #include "kernel_log.h"
 #include "process.h"
 
-#define PROCESS_LIMIT 9
-#define TASK_LIMIT (PROCESS_LIMIT + 1)
+#define TASK_LIMIT process_count
+#define PROCESS_TABLE_BASE 0xC0000000
+#define PROCESS_TABLE_SIZE 0x01000000
+#define PROCESS_KERNEL_STACK_SIZE 14336
 #define EXECUTABLE_MAX_SIZE (64 * 1024)
 #define EXECUTABLE_PAGE_COUNT (EXECUTABLE_MAX_SIZE / 4096)
 #define PROCESS_STACK_PAGE_COUNT 4
 #define PROCESS_SLOT_SIZE 0x00200000
 #define PROCESS_BASE 0x40000000
+#define USER_CODE_SELECTOR 0x1B
+#define USER_DATA_SELECTOR 0x23
+#define USER_PAGE_FLAGS 0x06
 #define PROCESS_PIPE_CAPACITY 16384
 #define PROCESS_SYSCALL_PRINT 1
 #define PROCESS_SYSCALL_KEYBOARD_READ 2
@@ -48,6 +53,8 @@ typedef struct
     unsigned int eip;
     unsigned int cs;
     unsigned int eflags;
+    unsigned int user_esp;
+    unsigned int user_ss;
 } SavedContext;
 
 typedef struct
@@ -58,13 +65,10 @@ typedef struct
     unsigned int wait_process_id;
     unsigned int window_handle;
     unsigned int *saved_stack;
+    unsigned int page_directory;
     unsigned int code_base;
     unsigned int code_size;
     unsigned int entry_offset;
-    unsigned int code_page_count;
-    unsigned int code_pages[EXECUTABLE_PAGE_COUNT];
-    unsigned int stack_page_count;
-    unsigned int stack_pages[PROCESS_STACK_PAGE_COUNT];
     volatile unsigned char keyboard_events[PROCESS_KEYBOARD_QUEUE_SIZE];
     volatile unsigned char keyboard_event_read;
     volatile unsigned char keyboard_event_write;
@@ -82,6 +86,7 @@ typedef struct
     unsigned char background;
     unsigned int input_pipe;
     unsigned int output_pipe;
+    unsigned char kernel_stack[PROCESS_KERNEL_STACK_SIZE];
 } Process;
 
 typedef struct
@@ -98,7 +103,12 @@ typedef struct
     unsigned char data[PROCESS_PIPE_CAPACITY];
 } ProcessPipe;
 
-static Process processes[TASK_LIMIT];
+/* The process table lives in a kernel region shared by every address space
+   and grows one slot at a time, so the number of processes is limited only
+   by free memory. Each slot holds the process's kernel stack. */
+static Process *const processes = (Process *)PROCESS_TABLE_BASE;
+static unsigned int process_count;
+static unsigned int process_table_mapped;
 static ProcessPipe process_pipe;
 static unsigned int current_task;
 static unsigned int next_process_id = 1;
@@ -134,57 +144,103 @@ static unsigned int read_little_endian_dword(const unsigned char *data)
         ((unsigned int)data[3] << 24);
 }
 
-static unsigned int process_slot_base(unsigned int slot)
-{
-    return PROCESS_BASE + slot * PROCESS_SLOT_SIZE;
-}
-
-static int process_release_mapping(
-    unsigned int virtual_address,
-    unsigned int physical_address)
-{
-    unsigned int unmapped_address;
-
-    return memory_unmap_page(virtual_address, &unmapped_address) &&
-        unmapped_address == physical_address &&
-        memory_free_page(physical_address);
-}
-
 static int process_release(Process *process, unsigned int slot)
 {
-    unsigned int index;
-    int success = 1;
-
-    for (index = 0; index < process->code_page_count; ++index)
+    (void)slot;
+    if (process->page_directory != 0)
     {
-        if (!process_release_mapping(
-            process->code_base + index * 4096,
-            process->code_pages[index]))
-        {
-            success = 0;
-        }
+        memory_destroy_address_space(process->page_directory);
+        process->page_directory = 0;
     }
 
-    for (index = 0; index < process->stack_page_count; ++index)
-    {
-        unsigned int stack_base =
-            process_slot_base(slot) + PROCESS_SLOT_SIZE -
-            PROCESS_STACK_PAGE_COUNT * 4096;
-        if (!process_release_mapping(
-            stack_base + index * 4096,
-            process->stack_pages[index]))
-        {
-            success = 0;
-        }
-    }
-
-    process->code_page_count = 0;
-    process->stack_page_count = 0;
     process->saved_stack = 0;
     process->code_size = 0;
     process->entry_offset = 0;
     process->arguments[0] = '\0';
-    return success;
+    return 1;
+}
+
+static unsigned int process_kernel_stack_top(const Process *process)
+{
+    return (unsigned int)process + sizeof(Process);
+}
+
+/* Loads the page directory and ring 0 stack of the task about to run. */
+static void process_activate_current(void)
+{
+    Process *process = &processes[current_task];
+
+    if (current_task == 0 || process->page_directory == 0)
+    {
+        memory_switch_address_space(memory_kernel_address_space());
+        return;
+    }
+    interrupts_set_kernel_stack(process_kernel_stack_top(process));
+    memory_switch_address_space(process->page_directory);
+}
+
+static void process_initialize_slot(Process *process)
+{
+    process->state = TASK_UNUSED;
+    process->process_id = 0;
+    process->parent_process_id = 0;
+    process->wait_process_id = 0;
+    process->window_handle = 0;
+    process->saved_stack = 0;
+    process->page_directory = 0;
+    process->keyboard_event_read = 0;
+    process->keyboard_event_write = 0;
+    process->standard_input_read = 0;
+    process->standard_input_write = 0;
+    process->keyboard_shift_pressed = 0;
+    process->keyboard_caps_lock = 0;
+    process->keyboard_extended = 0;
+    process->arguments[0] = '\0';
+    process->standard_input_handle = STD_INPUT_HANDLE;
+    process->standard_output_handle = STD_OUTPUT_HANDLE;
+    process->standard_error_handle = STD_ERROR_HANDLE;
+    process->background = 0;
+    process->input_pipe = 0;
+    process->output_pipe = 0;
+}
+
+static int process_table_grow(void)
+{
+    unsigned int required = (process_count + 1) * sizeof(Process);
+
+    if (required > PROCESS_TABLE_SIZE)
+    {
+        return 0;
+    }
+    while (process_table_mapped < required)
+    {
+        unsigned int physical_address = memory_allocate_page();
+        volatile unsigned int *page;
+        unsigned int index;
+
+        if (physical_address == 0)
+        {
+            return 0;
+        }
+        if (!memory_map_page(
+            PROCESS_TABLE_BASE + process_table_mapped,
+            physical_address,
+            0x02))
+        {
+            memory_free_page(physical_address);
+            return 0;
+        }
+        page = (volatile unsigned int *)(
+            PROCESS_TABLE_BASE + process_table_mapped);
+        for (index = 0; index < 1024; ++index)
+        {
+            page[index] = 0;
+        }
+        process_table_mapped += 4096;
+    }
+    process_initialize_slot(&processes[process_count]);
+    ++process_count;
+    return 1;
 }
 
 static int process_abort(Process *process, unsigned int slot)
@@ -664,31 +720,12 @@ static int process_copy_string_to_array(
 
 void processes_initialize(void)
 {
-    unsigned int slot;
-
-    for (slot = 0; slot < TASK_LIMIT; ++slot)
+    process_count = 0;
+    process_table_mapped = 0;
+    if (!process_table_grow())
     {
-        processes[slot].state = TASK_UNUSED;
-        processes[slot].parent_process_id = 0;
-        processes[slot].wait_process_id = 0;
-        processes[slot].window_handle = 0;
-        processes[slot].saved_stack = 0;
-        processes[slot].code_page_count = 0;
-        processes[slot].stack_page_count = 0;
-        processes[slot].keyboard_event_read = 0;
-        processes[slot].keyboard_event_write = 0;
-        processes[slot].standard_input_read = 0;
-        processes[slot].standard_input_write = 0;
-        processes[slot].keyboard_shift_pressed = 0;
-        processes[slot].keyboard_caps_lock = 0;
-        processes[slot].keyboard_extended = 0;
-        processes[slot].arguments[0] = '\0';
-        processes[slot].standard_input_handle = STD_INPUT_HANDLE;
-        processes[slot].standard_output_handle = STD_OUTPUT_HANDLE;
-        processes[slot].standard_error_handle = STD_ERROR_HANDLE;
-        processes[slot].background = 0;
-        processes[slot].input_pipe = 0;
-        processes[slot].output_pipe = 0;
+        kernel_log(KERNEL_LOG_ERROR, "process", "process table unavailable");
+        return;
     }
 
     process_pipe.active = 0;
@@ -719,6 +756,7 @@ enum ProcessStartResult process_start(
     unsigned int entry_offset;
     unsigned int pid;
     unsigned int stack_top;
+    unsigned int previous_directory;
     unsigned int *stack;
     unsigned int argument_length = 0;
     unsigned int base_start = 0;
@@ -749,20 +787,24 @@ enum ProcessStartResult process_start(
     }
     if (process == 0)
     {
-        restore_interrupts(flags);
-        return PROCESS_START_LIMIT_REACHED;
+        if (!process_table_grow())
+        {
+            restore_interrupts(flags);
+            return PROCESS_START_LIMIT_REACHED;
+        }
+        slot = process_count - 1;
+        process = &processes[slot];
     }
 
     process->state = TASK_LOADING;
     process->saved_stack = 0;
-    process->code_base = process_slot_base(slot);
+    process->code_base = PROCESS_BASE;
     process->code_size = 0;
     process->entry_offset = 0;
     process->parent_process_id = 0;
     process->wait_process_id = 0;
     process->window_handle = 0;
-    process->code_page_count = 0;
-    process->stack_page_count = 0;
+    process->page_directory = 0;
     process->keyboard_event_read = 0;
     process->keyboard_event_write = 0;
     process->standard_input_read = 0;
@@ -781,67 +823,50 @@ enum ProcessStartResult process_start(
         process->arguments[index] = arguments[index];
     }
 
-    for (index = 0; index < EXECUTABLE_PAGE_COUNT; ++index)
+    process->page_directory = memory_create_address_space();
+    if (process->page_directory == 0)
+    {
+        int released = process_abort(process, slot);
+        restore_interrupts(flags);
+        return released
+            ? PROCESS_START_NO_MEMORY
+            : PROCESS_START_CLEANUP_ERROR;
+    }
+
+    for (index = 0;
+        index < EXECUTABLE_PAGE_COUNT + PROCESS_STACK_PAGE_COUNT;
+        ++index)
     {
         unsigned int physical_address = memory_allocate_page();
+        unsigned int virtual_address = index < EXECUTABLE_PAGE_COUNT
+            ? PROCESS_BASE + index * 4096
+            : PROCESS_BASE + PROCESS_SLOT_SIZE -
+                PROCESS_STACK_PAGE_COUNT * 4096 +
+                (index - EXECUTABLE_PAGE_COUNT) * 4096;
 
-        if (physical_address == 0)
+        if (physical_address == 0 ||
+            !memory_map_page_in(
+                process->page_directory,
+                virtual_address,
+                physical_address,
+                USER_PAGE_FLAGS))
         {
-            int released = process_abort(process, slot);
+            int released;
+
+            if (physical_address != 0)
+            {
+                memory_free_page(physical_address);
+            }
+            released = process_abort(process, slot);
             restore_interrupts(flags);
             return released
                 ? PROCESS_START_NO_MEMORY
                 : PROCESS_START_CLEANUP_ERROR;
         }
-        if (!memory_map_page(
-            process->code_base + index * 4096,
-            physical_address,
-            0x02))
-        {
-            memory_free_page(physical_address);
-            {
-                int released = process_abort(process, slot);
-                restore_interrupts(flags);
-                return released
-                    ? PROCESS_START_NO_MEMORY
-                    : PROCESS_START_CLEANUP_ERROR;
-            }
-        }
-        process->code_pages[process->code_page_count++] = physical_address;
     }
 
-    for (index = 0; index < PROCESS_STACK_PAGE_COUNT; ++index)
-    {
-        unsigned int physical_address = memory_allocate_page();
-        unsigned int stack_base =
-            process->code_base + PROCESS_SLOT_SIZE -
-            PROCESS_STACK_PAGE_COUNT * 4096;
-
-        if (physical_address == 0)
-        {
-            int released = process_abort(process, slot);
-            restore_interrupts(flags);
-            return released
-                ? PROCESS_START_NO_MEMORY
-                : PROCESS_START_CLEANUP_ERROR;
-        }
-        if (!memory_map_page(
-            stack_base + index * 4096,
-            physical_address,
-            0x02))
-        {
-            memory_free_page(physical_address);
-            {
-                int released = process_abort(process, slot);
-                restore_interrupts(flags);
-                return released
-                    ? PROCESS_START_NO_MEMORY
-                    : PROCESS_START_CLEANUP_ERROR;
-            }
-        }
-        process->stack_pages[process->stack_page_count++] = physical_address;
-    }
-
+    previous_directory = memory_current_address_space();
+    memory_switch_address_space(process->page_directory);
     read_result = filesystem_read_root_file(
         filename,
         (unsigned char *)process->code_base,
@@ -849,7 +874,10 @@ enum ProcessStartResult process_start(
         &file_size);
     if (read_result != FILE_READ_OK)
     {
-        int released = process_abort(process, slot);
+        int released;
+
+        memory_switch_address_space(previous_directory);
+        released = process_abort(process, slot);
         restore_interrupts(flags);
         if (!released)
         {
@@ -876,7 +904,10 @@ enum ProcessStartResult process_start(
         ((const unsigned char *)process->code_base)[2] != 'X' ||
         ((const unsigned char *)process->code_base)[3] != 'E')
     {
-        int released = process_abort(process, slot);
+        int released;
+
+        memory_switch_address_space(previous_directory);
+        released = process_abort(process, slot);
         restore_interrupts(flags);
         return released
             ? PROCESS_START_INVALID_EXECUTABLE
@@ -887,6 +918,7 @@ enum ProcessStartResult process_start(
         (const unsigned char *)process->code_base + 4);
     entry_offset = read_little_endian_dword(
         (const unsigned char *)process->code_base + 8);
+    memory_switch_address_space(previous_directory);
     if (expected_size != file_size || entry_offset < 12 ||
         entry_offset >= file_size)
     {
@@ -900,18 +932,20 @@ enum ProcessStartResult process_start(
     process->code_size = file_size;
     process->entry_offset = entry_offset;
     expected_size = (file_size + 4095) / 4096;
-    while (process->code_page_count > expected_size)
+    for (index = expected_size; index < EXECUTABLE_PAGE_COUNT; ++index)
     {
-        index = process->code_page_count - 1;
-        if (!process_release_mapping(
-            process->code_base + index * 4096,
-            process->code_pages[index]))
+        unsigned int unmapped_address;
+
+        if (!memory_unmap_page_in(
+                process->page_directory,
+                process->code_base + index * 4096,
+                &unmapped_address) ||
+            !memory_free_page(unmapped_address))
         {
             process->state = TASK_CLEANUP_ERROR;
             restore_interrupts(flags);
             return PROCESS_START_NO_MEMORY;
         }
-        --process->code_page_count;
     }
 
     pid = next_process_id++;
@@ -934,23 +968,25 @@ enum ProcessStartResult process_start(
     }
     process->name[index] = '\0';
 
-    stack_top = process->code_base + PROCESS_SLOT_SIZE;
+    stack_top = process_kernel_stack_top(process);
     stack = (unsigned int *)(stack_top - sizeof(SavedContext));
-    stack[0] = 0x10;
-    stack[1] = 0x10;
-    stack[2] = 0x10;
-    stack[3] = 0x10;
+    stack[0] = USER_DATA_SELECTOR;
+    stack[1] = USER_DATA_SELECTOR;
+    stack[2] = USER_DATA_SELECTOR;
+    stack[3] = USER_DATA_SELECTOR;
     stack[4] = 0;
     stack[5] = 0;
     stack[6] = 0;
-    stack[7] = stack_top;
+    stack[7] = 0;
     stack[8] = 0;
     stack[9] = 0;
     stack[10] = 0;
     stack[11] = 0;
     stack[12] = process->code_base + entry_offset;
-    stack[13] = 0x08;
+    stack[13] = USER_CODE_SELECTOR;
     stack[14] = 0x202;
+    stack[15] = PROCESS_BASE + PROCESS_SLOT_SIZE - 16;
+    stack[16] = USER_DATA_SELECTOR;
     process->saved_stack = stack;
     *process_id = pid;
     process->state = TASK_ACTIVE;
@@ -1067,6 +1103,35 @@ unsigned int __cdecl process_timer_tick(unsigned int *saved_stack)
     __outbyte(0x20, 0x20);
     process_cleanup_terminated();
     current_task = find_next_active_task();
+    process_activate_current();
+    return (unsigned int)processes[current_task].saved_stack;
+}
+
+unsigned int __cdecl process_handle_exception(unsigned int *frame)
+{
+    unsigned int vector = frame[12];
+
+    if ((frame[15] & 3) != 3 || current_task == 0)
+    {
+        terminal_write("kernel exception ");
+        terminal_write_unsigned(vector);
+        terminal_write(" at eip ");
+        terminal_write_unsigned(frame[14]);
+        terminal_write("\n");
+        for (;;)
+        {
+            __halt();
+        }
+    }
+
+    processes[current_task].saved_stack = frame;
+    terminal_write("process: exception ");
+    terminal_write_unsigned(vector);
+    terminal_write(" in pid ");
+    terminal_write_unsigned(processes[current_task].process_id);
+    terminal_write("; terminating.\n");
+    process_terminate_current();
+    process_activate_current();
     return (unsigned int)processes[current_task].saved_stack;
 }
 
@@ -1601,6 +1666,7 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         return (unsigned int)saved_stack;
     }
 
+    process_activate_current();
     return (unsigned int)processes[current_task].saved_stack;
 }
 

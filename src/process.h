@@ -74,6 +74,7 @@ int process_kill_by_id(unsigned int process_id);
 unsigned char process_keyboard_read_scancode(void);
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack);
 unsigned int __cdecl process_system_call(unsigned int *saved_stack);
+unsigned int __cdecl process_handle_exception(unsigned int *frame);
 void process_keyboard_scancode(unsigned char scancode);
 void shell_run_service(
     unsigned int service,
