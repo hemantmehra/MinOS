@@ -5,7 +5,9 @@
 #define PAGE_SIZE 4096
 #define PAGE_DIRECTORY_ENTRIES 1024
 #define PAGE_TABLE_ENTRIES 1024
-#define PHYSICAL_MEMORY_SIZE (16 * 1024 * 1024)
+#define PHYSICAL_MEMORY_SIZE (512 * 1024 * 1024)
+#define IDENTITY_TABLE_COUNT (PHYSICAL_MEMORY_SIZE / (4 * 1024 * 1024))
+#define STATIC_IDENTITY_TABLE_COUNT 4
 #define MANAGED_PAGE_COUNT (PHYSICAL_MEMORY_SIZE / PAGE_SIZE)
 #define RESERVED_PAGE_COUNT (1024 * 1024 / PAGE_SIZE)
 #define PAGE_BITMAP_SIZE (MANAGED_PAGE_COUNT / 8)
@@ -18,12 +20,13 @@
 #define PROCESS_TABLE_REGION_SIZE 0x01000000
 #define FRAMEBUFFER_REGION 0xD0000000
 #define WINDOW_REGION 0xE0000000
-#define WINDOW_REGION_SIZE 0x00800000
+#define WINDOW_REGION_SIZE 0x02000000
 
 __declspec(align(4096))
 static unsigned int page_directory[PAGE_DIRECTORY_ENTRIES];
 __declspec(align(4096))
-static unsigned int identity_page_tables[4][PAGE_TABLE_ENTRIES];
+static unsigned int identity_page_tables[STATIC_IDENTITY_TABLE_COUNT]
+    [PAGE_TABLE_ENTRIES];
 static unsigned char allocated_pages[PAGE_BITMAP_SIZE];
 
 static int page_is_allocated(unsigned int page)
@@ -57,7 +60,9 @@ void memory_initialize(void)
         directory[directory_index] = 0;
     }
 
-    for (directory_index = 0; directory_index < 4; ++directory_index)
+    for (directory_index = 0;
+        directory_index < STATIC_IDENTITY_TABLE_COUNT;
+        ++directory_index)
     {
         volatile unsigned int *page_table =
             identity_page_tables[directory_index];
@@ -83,6 +88,28 @@ void memory_initialize(void)
     for (page = 0; page < RESERVED_PAGE_COUNT; ++page)
     {
         mark_page_allocated(page);
+    }
+
+    /* The remaining identity tables come from the page allocator. They are
+       allocated from low memory, which the static tables already map. */
+    for (directory_index = STATIC_IDENTITY_TABLE_COUNT;
+        directory_index < IDENTITY_TABLE_COUNT;
+        ++directory_index)
+    {
+        unsigned int table_address = memory_allocate_page();
+        volatile unsigned int *page_table =
+            (volatile unsigned int *)table_address;
+
+        for (table_index = 0;
+            table_index < PAGE_TABLE_ENTRIES;
+            ++table_index)
+        {
+            page = directory_index * PAGE_TABLE_ENTRIES + table_index;
+            page_table[table_index] =
+                page * PAGE_SIZE | PAGE_PRESENT | PAGE_WRITABLE;
+        }
+        directory[directory_index] =
+            table_address | PAGE_PRESENT | PAGE_WRITABLE;
     }
 
     /* Kernel page tables above KERNEL_SHARED_BASE are created up front so
@@ -307,7 +334,7 @@ unsigned int memory_create_address_space(void)
     }
     for (index = 0; index < PAGE_DIRECTORY_ENTRIES; ++index)
     {
-        if (index < 4 || index >= (KERNEL_SHARED_BASE >> 22))
+        if (index < IDENTITY_TABLE_COUNT || index >= (KERNEL_SHARED_BASE >> 22))
         {
             directory[index] = page_directory[index];
         }
@@ -327,7 +354,7 @@ void memory_destroy_address_space(unsigned int directory_address)
     unsigned int table_index;
 
     memory_switch_address_space((unsigned int)page_directory);
-    for (directory_index = 4;
+    for (directory_index = IDENTITY_TABLE_COUNT;
         directory_index < (KERNEL_SHARED_BASE >> 22);
         ++directory_index)
     {

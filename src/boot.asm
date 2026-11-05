@@ -1,7 +1,7 @@
 BITS 16
 ORG 0x7C00
 
-%define KERNEL_SECTOR_COUNT 224
+%define KERNEL_SECTOR_COUNT 288
 %define KERNEL_FIRST_READ_SECTOR_COUNT 127
 %define CODE_SELECTOR 0x08
 %define DATA_SELECTOR 0x10
@@ -22,10 +22,19 @@ start:
     int 0x13
     jc disk_read_error
 
-    mov word [disk_address_packet + 2], KERNEL_SECTOR_COUNT - KERNEL_FIRST_READ_SECTOR_COUNT
+    mov word [disk_address_packet + 2], 127
     mov word [disk_address_packet + 6], 0x1FE0
     mov dword [disk_address_packet + 8], KERNEL_FIRST_READ_SECTOR_COUNT + 1
     mov dword [disk_address_packet + 12], 0
+    mov si, disk_address_packet
+    mov dl, [boot_drive]
+    mov ah, 0x42
+    int 0x13
+    jc disk_read_error
+
+    mov word [disk_address_packet + 2], KERNEL_SECTOR_COUNT - 254
+    mov word [disk_address_packet + 6], 0x2FC0
+    mov dword [disk_address_packet + 8], 255
     mov si, disk_address_packet
     mov dl, [boot_drive]
     mov ah, 0x42

@@ -33,7 +33,9 @@ QEMU appends structured kernel logs from the debug console to
 - IDT with safe-halting CPU exception handlers; PIT timer, keyboard (IRQ1)
   and PS/2 mouse (IRQ12) interrupts.
 - x86 paging with a 4 KiB physical page allocator and virtual mapping APIs
-  (the first 16 MiB is identity-mapped).
+  (the first 512 MiB of RAM is identity-mapped; QEMU is run with `-m 512M`).
+  Up to 32 graphics windows can be open at once; the taskbar shrinks its
+  items to fit.
 
 **Processes**
 - Preemptive round-robin scheduler that saves and restores full register,

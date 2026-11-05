@@ -31,7 +31,7 @@
 #define TASKBAR_TITLE_MAX_LENGTH 15
 #define TASKBAR_TITLE_PREFIX_LENGTH (TASKBAR_TITLE_MAX_LENGTH - 3)
 #define TASKBAR_BACKGROUND_COLOR 8
-#define GRAPHICS_WINDOW_LIMIT 8
+#define GRAPHICS_WINDOW_LIMIT 32
 #define GRAPHICS_WINDOW_TITLE_LENGTH 32
 #define GRAPHICS_WINDOW_MAX_WIDTH 640
 #define GRAPHICS_WINDOW_MAX_HEIGHT 480
@@ -341,9 +341,22 @@ static void vga_render_start_ui_to(volatile unsigned char *target)
     }
 }
 
+static unsigned int taskbar_item_width(unsigned int count)
+{
+    unsigned int available = VGA_GRAPHICS_WIDTH - START_BUTTON_WIDTH;
+
+    if (count == 0 || count * TASKBAR_ITEM_WIDTH <= available)
+    {
+        return TASKBAR_ITEM_WIDTH;
+    }
+    return available / count;
+}
+
 static void vga_render_taskbar_to(volatile unsigned char *target)
 {
     unsigned int count = taskbar_item_count();
+    unsigned int item_width = taskbar_item_width(count);
+    unsigned int title_limit = (item_width - 8) / 8;
     unsigned int item;
 
     vga_fill_rectangle_to(
@@ -364,8 +377,8 @@ static void vga_render_taskbar_to(volatile unsigned char *target)
     for (item = 0; item < count; ++item)
     {
         int slot = taskbar_window_slot(item);
-        unsigned int x = START_BUTTON_WIDTH + item * TASKBAR_ITEM_WIDTH;
-        unsigned int width = TASKBAR_ITEM_WIDTH;
+        unsigned int x = START_BUTTON_WIDTH + item * item_width;
+        unsigned int width = item_width;
         unsigned char selected = slot < 0
             ? shell_window_active
             : (unsigned char)(
@@ -386,10 +399,10 @@ static void vga_render_taskbar_to(volatile unsigned char *target)
         {
             ++title_length;
         }
-        if (title_length > TASKBAR_TITLE_MAX_LENGTH)
+        if (title_length > title_limit)
         {
-            truncated = 1;
-            title_length = TASKBAR_TITLE_MAX_LENGTH;
+            truncated = title_limit > 3;
+            title_length = title_limit;
         }
 
         vga_fill_rectangle_to(
@@ -404,7 +417,7 @@ static void vga_render_taskbar_to(volatile unsigned char *target)
         {
             unsigned char character =
                 truncated &&
-                title_index >= TASKBAR_TITLE_PREFIX_LENGTH
+                title_index >= title_limit - 3
                 ? '.'
                 : (unsigned char)title[title_index];
 
@@ -1812,11 +1825,11 @@ void video_mouse_left_click(unsigned int x, unsigned int y)
         }
         x -= START_BUTTON_WIDTH;
         count = taskbar_item_count();
-        if (x >= count * TASKBAR_ITEM_WIDTH)
+        if (x >= count * taskbar_item_width(count))
         {
             return;
         }
-        item = x / TASKBAR_ITEM_WIDTH;
+        item = x / taskbar_item_width(count);
         slot = taskbar_window_slot(item);
         if (slot < 0)
         {
