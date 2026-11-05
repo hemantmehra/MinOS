@@ -1621,6 +1621,7 @@ unsigned char process_keyboard_read_scancode(void)
 void process_keyboard_scancode(unsigned char scancode)
 {
     unsigned int slot;
+    unsigned int focus_owner = video_active_owner_process_id();
 
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
@@ -1628,6 +1629,7 @@ void process_keyboard_scancode(unsigned char scancode)
         unsigned char next;
         unsigned char next_input;
         char character;
+        int focused;
 
         if (process->state != TASK_ACTIVE)
         {
@@ -1638,11 +1640,20 @@ void process_keyboard_scancode(unsigned char scancode)
             continue;
         }
 
+        /* Decode for everyone so modifier state stays correct, but only
+           the process owning the top window receives the key. */
+        focused = focus_owner != 0
+            ? process->process_id == focus_owner
+            : process->window_handle == 0;
         character = keyboard_decode_scancode(
             scancode,
             &process->keyboard_shift_pressed,
             &process->keyboard_caps_lock,
             &process->keyboard_extended);
+        if (!focused)
+        {
+            continue;
+        }
         if (character != '\0')
         {
             next_input = (unsigned char)(

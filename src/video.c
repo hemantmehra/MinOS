@@ -1878,6 +1878,15 @@ void video_mouse_left_click(unsigned int x, unsigned int y)
     vga_redraw_desktop();
 }
 
+unsigned int video_active_owner_process_id(void)
+{
+    if (shell_window_active || active_window_slot < 0)
+    {
+        return 0;
+    }
+    return graphics_windows[active_window_slot].owner_process_id;
+}
+
 unsigned int video_take_launch_request(void)
 {
     unsigned int request = pending_launch_request;

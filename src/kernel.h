@@ -36,6 +36,7 @@ void video_mouse_move(
     unsigned char left_button_pressed);
 void video_mouse_left_click(unsigned int x, unsigned int y);
 unsigned int video_take_launch_request(void);
+unsigned int video_active_owner_process_id(void);
 unsigned int video_take_close_request(void);
 unsigned int video_create_window(
     unsigned int owner_process_id,
