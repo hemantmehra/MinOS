@@ -1,0 +1,177 @@
+// The MinOS shell, started by the kernel at boot. It parses each command line
+// (echo, `&` background, one `|` pipeline, arguments), starts programs with
+// start_process, and waits for foreground programs with wait_process.
+fn print_start_error(code) {
+    if (code == 1) {
+        print("run: use an 8.3 executable name, such as HELLO.EXE.\n");
+    } else if (code == 2) {
+        print("run: command arguments are too long.\n");
+    } else if (code == 3) {
+        print("run: executable not found.\n");
+    } else if (code == 4) {
+        print("run: executable exceeds the 64 KiB limit.\n");
+    } else if (code == 5) {
+        print("run: failed to read executable from disk.\n");
+    } else if (code == 6) {
+        print("run: invalid MEXE executable.\n");
+    } else if (code == 7) {
+        print("run: could not allocate executable memory.\n");
+    } else if (code == 8) {
+        print("run: process limit reached (9 processes).\n");
+    } else {
+        print("run: could not start the process.\n");
+    }
+}
+
+fn main() {
+    array name[128];
+    array args[128];
+    let line = 0;
+    let end = 0;
+    let background = 0;
+    let pipe_at = -1;
+    let pipes = 0;
+    let stages = 1;
+    let stage = 0;
+    let running = 1;
+    let seg_start = 0;
+    let seg_end = 0;
+    let name_end = 0;
+    let arg_start = 0;
+    let count = 0;
+    let pos = 0;
+    let flags = 0;
+    let pid = 0;
+    let pid0 = 0;
+    let pid1 = 0;
+    let waited = 0;
+
+    while (1 == 1) {
+        line = read_line("minios> ", 127);
+
+        end = 0;
+        while (string_char(line, end) != 0) {
+            end = end + 1;
+        }
+        while (end > 0 && string_char(line, end - 1) == 32) {
+            end = end - 1;
+        }
+
+        background = 0;
+        if (end > 0 && string_char(line, end - 1) == 38) {
+            background = 1;
+            end = end - 1;
+            while (end > 0 && string_char(line, end - 1) == 32) {
+                end = end - 1;
+            }
+        }
+
+        pipes = 0;
+        pipe_at = -1;
+        pos = 0;
+        while (pos < end) {
+            if (string_char(line, pos) == 124) {
+                pipes = pipes + 1;
+                pipe_at = pos;
+            }
+            pos = pos + 1;
+        }
+
+        running = 1;
+        stages = 1;
+        pid0 = 0;
+        pid1 = 0;
+        if (end == 0) {
+            running = 0;
+        } else if (pipes > 1) {
+            print("Usage: <command> | <command>\n");
+            running = 0;
+        } else if (pipes == 1) {
+            stages = 2;
+        }
+
+        stage = 0;
+        while (running == 1 && stage < stages) {
+            seg_start = 0;
+            seg_end = end;
+            if (stages == 2) {
+                if (stage == 0) {
+                    seg_end = pipe_at;
+                } else {
+                    seg_start = pipe_at + 1;
+                }
+            }
+            while (seg_start < seg_end && string_char(line, seg_start) == 32) {
+                seg_start = seg_start + 1;
+            }
+            while (seg_end > seg_start && string_char(line, seg_end - 1) == 32) {
+                seg_end = seg_end - 1;
+            }
+
+            if (seg_start == seg_end) {
+                print("Usage: <command> | <command>\n");
+                running = 0;
+            } else {
+                name_end = seg_start;
+                count = 0;
+                while (name_end < seg_end && string_char(line, name_end) != 32) {
+                    name[count] = string_char(line, name_end);
+                    count = count + 1;
+                    name_end = name_end + 1;
+                }
+                name[count] = 0;
+
+                arg_start = name_end;
+                while (arg_start < seg_end && string_char(line, arg_start) == 32) {
+                    arg_start = arg_start + 1;
+                }
+                count = 0;
+                pos = arg_start;
+                while (pos < seg_end) {
+                    args[count] = string_char(line, pos);
+                    count = count + 1;
+                    pos = pos + 1;
+                }
+                args[count] = 0;
+
+                if (stages == 1 && name_end - seg_start == 4 && name[0] == 101 && name[1] == 99 && name[2] == 104 && name[3] == 111) {
+                    pos = arg_start;
+                    while (pos < seg_end) {
+                        print_char(string_char(line, pos));
+                        pos = pos + 1;
+                    }
+                    print("\n");
+                    running = 0;
+                } else {
+                    flags = background;
+                    if (stages == 2) {
+                        if (stage == 0) {
+                            flags = flags + 2;
+                        } else {
+                            flags = flags + 4;
+                        }
+                    }
+                    pid = start_process(name, args, flags);
+                    if (pid < 0) {
+                        print_start_error(0 - pid);
+                        running = 0;
+                    } else if (stage == 0) {
+                        pid0 = pid;
+                    } else {
+                        pid1 = pid;
+                    }
+                }
+            }
+            stage = stage + 1;
+        }
+
+        if (background == 0) {
+            if (pid0 > 0) {
+                waited = wait_process(pid0);
+            }
+            if (pid1 > 0) {
+                waited = wait_process(pid1);
+            }
+        }
+    }
+}

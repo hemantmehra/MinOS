@@ -49,10 +49,12 @@ BUILTINS = {
     "random": (1, "expression"),
     "read_number": (2, "expression"),
     "read_line": (2, "expression"),
+    "start_process": (3, "expression"),
     "starts_with": (2, "expression"),
     "start_graphics_mode": (0, "statement"),
     "string_char": (2, "expression"),
     "terminal_clear": (0, "statement"),
+    "wait_process": (1, "expression"),
 }
 
 SYSTEM_SERVICES = {
@@ -88,6 +90,7 @@ PROCESS_SERVICES = {
     "create_process": 30,
     "wait_process": 31,
     "create_window": 32,
+    "start_process": 33,
 }
 
 STANDARD_HANDLES = {
@@ -759,6 +762,41 @@ class CodeGenerator:
             filename = self._intern_string(arguments[0]["value"])
             self._line(
                 f"    lea ebx, [edi + {filename} - image_start]"
+            )
+            self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
+            self._line("    int 0x80")
+        elif name == "start_process":
+            self._check_arity(expression, 3)
+            self._check_integer_arguments(expression, start=2)
+            array_names = []
+            for index in (0, 1):
+                array_expression = arguments[index]
+                if array_expression["kind"] != "variable":
+                    self._error_from_expression(
+                        array_expression,
+                        "start_process expects local arrays",
+                    )
+                array_name = array_expression["name"]
+                array_size = self.array_sizes.get(array_name)
+                if array_size is None:
+                    self._error_from_expression(
+                        array_expression,
+                        f"unknown array {array_name!r}",
+                    )
+                if array_size < 128:
+                    self._error_from_expression(
+                        array_expression,
+                        "start_process buffers must contain at least "
+                        "128 elements",
+                    )
+                array_names.append(array_name)
+            self._generate_expression(arguments[2])
+            self._line("    mov edx, eax")
+            self._line(
+                f"    lea ebx, [ebp{self.array_offsets[array_names[0]]:+d}]"
+            )
+            self._line(
+                f"    lea ecx, [ebp{self.array_offsets[array_names[1]]:+d}]"
             )
             self._line(f"    mov eax, {PROCESS_SERVICES[name]}")
             self._line("    int 0x80")

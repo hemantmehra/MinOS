@@ -1,22 +1,27 @@
 # Process loading and exit
 
-MinOS runs each executable as one schedulable thread. The shell is also a
-scheduler task, so starting a program does not replace or shut down the shell.
+MinOS runs each executable as one schedulable thread. The kernel starts
+`SHELL.EXE` (built from `src/programs/shell.high`) at boot as an ordinary
+foreground process, and restarts it if it ever exits. The kernel's own
+scheduler task (task 0, named `kernel`) only idles and supervises the shell.
 Processes currently run in ring 0 and share the kernel address space; they are
 not isolated from the kernel or from one another.
 
 ## Starting a process
 
-When a command is not a built-in shell command, the shell passes it to
-`process_start` as an ext2 root-directory filename. For example, entering
-`COUNTDOWN.EXE` asks the filesystem to read that file. The loader disables
-interrupts while it prepares the process so that the timer cannot schedule a
-partially initialized task.
+The shell program reads a command line, parses it itself (`echo`, trailing `&`,
+one `|` pipeline, arguments), and starts each program with system call `33`,
+which loads the named ext2 root-directory file via `process_start`. For
+example, entering `COUNTDOWN.EXE` asks the filesystem to read that file. For a
+foreground command the shell blocks in `wait_process` until the child exits.
+The loader
+disables interrupts while it prepares the process so that the timer cannot
+schedule a partially initialized task.
 
 The loader then:
 
-1. Finds an unused process slot. The kernel supports up to eight processes in
-   addition to the shell.
+1. Finds an unused process slot. The kernel supports up to nine processes,
+   including the shell program.
 2. Reserves a 2 MiB virtual-address slot starting at `0x40000000`. It allocates
    physical pages for the executable and a four-page stack, and maps those
    pages into the process slot.
@@ -90,6 +95,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `30` | Create a child process | `EBX` points to a null-terminated executable name in the caller's image; returns the child PID or `-1` |
 | `31` | Wait for a child process | Child PID in `EBX`; blocks until it exits and returns `1`, or returns `0` if it is not a child |
 | `32` | Create a graphics window | `EBX` points to a non-empty null-terminated title in the caller's image, `ECX` is width (1-640), `EDX` is height (1-480); returns a handle or `0` |
+| `33` | Start a program | `EBX` points to a local array with the null-terminated program name, `ECX` to an array with its arguments (each at least 128 elements, one character per element), `EDX` is flags (`1` background, `2` stdout feeds a pipe, `4` stdin reads the pipe started by the preceding `2` call); returns the child PID (a child of the caller unless background) or the negated start error (`-1` invalid name, `-2` arguments too long, `-3` not found, `-4` too large, `-5` disk error, `-6` invalid executable, `-7` no memory, `-8` process limit, `-9` cleanup error) |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;

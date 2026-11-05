@@ -3,7 +3,7 @@
 #include "kernel_log.h"
 #include "process.h"
 
-#define PROCESS_LIMIT 8
+#define PROCESS_LIMIT 9
 #define TASK_LIMIT (PROCESS_LIMIT + 1)
 #define EXECUTABLE_MAX_SIZE (64 * 1024)
 #define EXECUTABLE_PAGE_COUNT (EXECUTABLE_MAX_SIZE / 4096)
@@ -694,12 +694,13 @@ void processes_initialize(void)
     process_pipe.active = 0;
     processes[0].state = TASK_ACTIVE;
     processes[0].process_id = 0;
-    processes[0].name[0] = 's';
-    processes[0].name[1] = 'h';
-    processes[0].name[2] = 'e';
-    processes[0].name[3] = 'l';
-    processes[0].name[4] = 'l';
-    processes[0].name[5] = '\0';
+    processes[0].name[0] = 'k';
+    processes[0].name[1] = 'e';
+    processes[0].name[2] = 'r';
+    processes[0].name[3] = 'n';
+    processes[0].name[4] = 'e';
+    processes[0].name[5] = 'l';
+    processes[0].name[6] = '\0';
     current_task = 0;
     kernel_log(KERNEL_LOG_INFO, "process", "scheduler initialized");
 }
@@ -950,95 +951,106 @@ enum ProcessStartResult process_start(
     return PROCESS_START_OK;
 }
 
-enum ProcessStartResult process_start_pipeline(
-    const char *first_filename,
-    const char *first_arguments,
-    const char *second_filename,
-    const char *second_arguments,
-    int background)
+#define SPAWN_BACKGROUND 1
+#define SPAWN_PIPE_OUTPUT 2
+#define SPAWN_PIPE_INPUT 4
+
+static Process *process_find_active(unsigned int process_id)
+{
+    unsigned int index;
+
+    for (index = 1; index < TASK_LIMIT; ++index)
+    {
+        if (processes[index].process_id == process_id &&
+            processes[index].state == TASK_ACTIVE)
+        {
+            return &processes[index];
+        }
+    }
+    return 0;
+}
+
+// Starts a program for the shell. Returns the PID, or the negated
+// ProcessStartResult on failure. A SPAWN_PIPE_OUTPUT start must be followed
+// by a SPAWN_PIPE_INPUT start to complete a pipeline.
+static int process_spawn(
+    const Process *parent,
+    const char *filename,
+    const char *arguments,
+    unsigned int spawn_flags)
 {
     unsigned int flags = disable_interrupts();
-    unsigned int first_process_id;
-    unsigned int second_process_id;
-    unsigned int index;
-    Process *first_process = 0;
-    Process *second_process = 0;
+    unsigned int child_process_id;
+    int background = (spawn_flags & SPAWN_BACKGROUND) != 0;
+    Process *child;
     enum ProcessStartResult result;
 
-    if (process_pipe.active)
+    if (spawn_flags & SPAWN_PIPE_OUTPUT)
+    {
+        if (process_pipe.active)
+        {
+            restore_interrupts(flags);
+            return -(int)PROCESS_START_LIMIT_REACHED;
+        }
+        process_pipe.active = 1;
+        process_pipe.producer_id = 0;
+        process_pipe.consumer_id = 0;
+        process_pipe.read_position = 0;
+        process_pipe.write_position = 0;
+        process_pipe.buffered = 0;
+        process_pipe.producer_closed = 0;
+        process_pipe.consumer_closed = 0;
+        process_pipe.overflowed = 0;
+    }
+    else if ((spawn_flags & SPAWN_PIPE_INPUT) &&
+        (!process_pipe.active || process_pipe.producer_id == 0 ||
+            process_pipe.consumer_id != 0))
     {
         restore_interrupts(flags);
-        return PROCESS_START_LIMIT_REACHED;
+        return -(int)PROCESS_START_CLEANUP_ERROR;
     }
-
-    process_pipe.active = 1;
-    process_pipe.producer_id = 0;
-    process_pipe.consumer_id = 0;
-    process_pipe.read_position = 0;
-    process_pipe.write_position = 0;
-    process_pipe.buffered = 0;
-    process_pipe.producer_closed = 0;
-    process_pipe.consumer_closed = 0;
-    process_pipe.overflowed = 0;
 
     result = process_start(
-        first_filename, first_arguments, &first_process_id, background);
-    if (result != PROCESS_START_OK)
+        filename, arguments, &child_process_id, background);
+    child = result == PROCESS_START_OK ?
+        process_find_active(child_process_id) : 0;
+    if (child == 0)
     {
-        process_pipe.active = 0;
-        restore_interrupts(flags);
-        return result;
-    }
-
-    for (index = 1; index < TASK_LIMIT; ++index)
-    {
-        if (processes[index].process_id == first_process_id &&
-            processes[index].state == TASK_ACTIVE)
+        if (spawn_flags & SPAWN_PIPE_OUTPUT)
         {
-            first_process = &processes[index];
-            break;
+            process_pipe.active = 0;
         }
-    }
-    if (first_process == 0)
-    {
-        process_pipe.active = 0;
-        restore_interrupts(flags);
-        return PROCESS_START_CLEANUP_ERROR;
-    }
-
-    process_pipe.producer_id = first_process_id;
-    first_process->output_pipe = 1;
-    result = process_start(
-        second_filename, second_arguments, &second_process_id, background);
-    if (result != PROCESS_START_OK)
-    {
-        process_pipe.active = 0;
-        first_process->state = TASK_DYING;
-        restore_interrupts(flags);
-        return result;
-    }
-
-    for (index = 1; index < TASK_LIMIT; ++index)
-    {
-        if (processes[index].process_id == second_process_id &&
-            processes[index].state == TASK_ACTIVE)
+        if (spawn_flags & SPAWN_PIPE_INPUT)
         {
-            second_process = &processes[index];
-            break;
+            Process *producer = process_find_active(process_pipe.producer_id);
+
+            process_pipe.active = 0;
+            if (producer != 0)
+            {
+                producer->state = TASK_DYING;
+            }
         }
-    }
-    if (second_process == 0)
-    {
-        process_pipe.active = 0;
-        first_process->state = TASK_DYING;
         restore_interrupts(flags);
-        return PROCESS_START_CLEANUP_ERROR;
+        return -(int)(result == PROCESS_START_OK ?
+            PROCESS_START_CLEANUP_ERROR : result);
     }
 
-    process_pipe.consumer_id = second_process_id;
-    second_process->input_pipe = 1;
+    if (!background)
+    {
+        child->parent_process_id = parent->process_id;
+    }
+    if (spawn_flags & SPAWN_PIPE_OUTPUT)
+    {
+        process_pipe.producer_id = child_process_id;
+        child->output_pipe = 1;
+    }
+    if (spawn_flags & SPAWN_PIPE_INPUT)
+    {
+        process_pipe.consumer_id = child_process_id;
+        child->input_pipe = 1;
+    }
     restore_interrupts(flags);
-    return PROCESS_START_OK;
+    return (int)child_process_id;
 }
 
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack)
@@ -1310,6 +1322,22 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
                     }
                 }
             }
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_START_PROCESS)
+    {
+        char filename[128];
+        char arguments[128];
+
+        if (!process_copy_user_path(process, saved_stack[8], filename) ||
+            !process_copy_user_path(process, saved_stack[10], arguments))
+        {
+            saved_stack[11] = (unsigned int)-(int)PROCESS_START_INVALID_NAME;
+        }
+        else
+        {
+            saved_stack[11] = (unsigned int)process_spawn(
+                process, filename, arguments, saved_stack[9]);
         }
     }
     else if (syscall_number == PROCESS_SERVICE_WAIT_PROCESS)

@@ -119,6 +119,13 @@ support `\n`, `\r`, `\t`, `\"`, and `\\` escapes.
   command-line process name (case-insensitive, with an optional `.exe` suffix)
   and returns `1` when it succeeds, `0` when no process matches, or `-1` for
   an empty name.
+- `start_process(name, args, flags)` starts a program from two local integer
+  arrays of at least 128 elements (null-terminated name and arguments, one
+  character per element). Flags: `1` background, `2` the program's standard
+  output feeds a pipe, `4` its standard input reads that pipe (start the `2`
+  program first). It returns the PID or a negative start error (`-1` invalid
+  name through `-9`). `SHELL.EXE` implements command parsing with it,
+  `string_char`, and `wait_process`.
 - `create_process("PROGRAM.EXE")` starts a root-directory executable as a child
   and returns its process ID, or `-1` if it cannot be started.
 - `wait_process(pid)` blocks until the calling process's child exits, returning

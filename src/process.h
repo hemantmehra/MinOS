@@ -47,7 +47,8 @@ enum ProcessService
     PROCESS_SERVICE_PRESENT_GRAPHICS,
     PROCESS_SERVICE_CREATE_PROCESS,
     PROCESS_SERVICE_WAIT_PROCESS,
-    PROCESS_SERVICE_CREATE_WINDOW
+    PROCESS_SERVICE_CREATE_WINDOW,
+    PROCESS_SERVICE_START_PROCESS
 };
 
 enum ProcessStandardHandle
@@ -63,12 +64,6 @@ enum ProcessStartResult process_start(
     const char *arguments,
     unsigned int *process_id,
     int background);
-enum ProcessStartResult process_start_pipeline(
-    const char *first_filename,
-    const char *first_arguments,
-    const char *second_filename,
-    const char *second_arguments,
-    int background);
 void process_list(void);
 int process_has_active_process(void);
 int process_has_foreground_process(void);
@@ -83,5 +78,4 @@ void shell_run_service(
     const char *arguments,
     unsigned int owner_process_id,
     unsigned int window_handle);
-
 #endif

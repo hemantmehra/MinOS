@@ -3,212 +3,6 @@
 #include "kernel_log.h"
 #include "process.h"
 
-static int parse_pipeline_stage(char **command, char **arguments)
-{
-    char *name_end;
-
-    while (is_space(**command))
-    {
-        ++*command;
-    }
-    if (**command == '\0')
-    {
-        return 0;
-    }
-
-    name_end = *command;
-    while (*name_end != '\0' && !is_space(*name_end))
-    {
-        ++name_end;
-    }
-    *arguments = name_end;
-    while (is_space(**arguments))
-    {
-        ++*arguments;
-    }
-    *name_end = '\0';
-    return 1;
-}
-
-static void run_pipeline(
-    char *first_command,
-    char *second_command,
-    int background)
-{
-    char *first_arguments;
-    char *second_arguments;
-    enum ProcessStartResult result;
-
-    if (!parse_pipeline_stage(&first_command, &first_arguments) ||
-        !parse_pipeline_stage(&second_command, &second_arguments))
-    {
-        terminal_write("Usage: <command> | <command>\n");
-        return;
-    }
-
-    result = process_start_pipeline(
-        first_command,
-        first_arguments,
-        second_command,
-        second_arguments,
-        background);
-    if (result != PROCESS_START_OK)
-    {
-        if (result == PROCESS_START_NOT_FOUND)
-        {
-            terminal_write("pipe: executable not found.\n");
-        }
-        else if (result == PROCESS_START_LIMIT_REACHED)
-        {
-            terminal_write("pipe: process limit reached.\n");
-        }
-        else
-        {
-            terminal_write("pipe: could not start both processes.\n");
-        }
-    }
-}
-
-static void run_command(char *command)
-{
-    char *argument;
-    char *name_end;
-    char *pipe_separator = 0;
-    char *scan;
-    char *command_end;
-    unsigned int process_id;
-    int background = 0;
-    enum ProcessStartResult result;
-
-    while (is_space(*command))
-    {
-        ++command;
-    }
-
-    if (*command == '\0')
-    {
-        return;
-    }
-
-    command_end = command;
-    while (*command_end != '\0')
-    {
-        ++command_end;
-    }
-    while (command_end > command && is_space(command_end[-1]))
-    {
-        --command_end;
-    }
-    if (command_end > command && command_end[-1] == '&')
-    {
-        background = 1;
-        --command_end;
-        while (command_end > command && is_space(command_end[-1]))
-        {
-            --command_end;
-        }
-        *command_end = '\0';
-    }
-
-    for (scan = command; *scan != '\0'; ++scan)
-    {
-        if (*scan == '|')
-        {
-            if (pipe_separator != 0)
-            {
-                terminal_write("Usage: <command> | <command>\n");
-                return;
-            }
-            pipe_separator = scan;
-        }
-    }
-    if (pipe_separator != 0)
-    {
-        *pipe_separator = '\0';
-        run_pipeline(command, pipe_separator + 1, background);
-        return;
-    }
-
-    argument = command;
-    while (*argument != '\0' && !is_space(*argument))
-    {
-        ++argument;
-    }
-
-    if (argument - command == 4 &&
-        command[0] == 'e' && command[1] == 'c' &&
-        command[2] == 'h' && command[3] == 'o')
-    {
-        while (is_space(*argument))
-        {
-            ++argument;
-        }
-        terminal_write(argument);
-        terminal_write("\n");
-        return;
-    }
-
-    name_end = argument;
-    while (is_space(*argument))
-    {
-        ++argument;
-    }
-    if (*argument != '\0' &&
-        !command_token_equals(command, name_end, "mkdir") &&
-        !command_token_equals(command, name_end, "ls") &&
-        !command_token_equals(command, name_end, "cd") &&
-        !command_token_equals(command, name_end, "cat") &&
-        !command_token_equals(command, name_end, "write") &&
-        !command_token_equals(command, name_end, "kill"))
-    {
-        terminal_write("Unknown command or executable arguments: ");
-        terminal_write(command);
-        terminal_write("\n");
-        return;
-    }
-
-    *name_end = '\0';
-    result = process_start(command, argument, &process_id, background);
-    switch (result)
-    {
-    case PROCESS_START_OK:
-        break;
-    case PROCESS_START_INVALID_NAME:
-        terminal_write("run: use an 8.3 executable name, such as HELLO.EXE.\n");
-        break;
-    case PROCESS_START_ARGUMENT_TOO_LONG:
-        terminal_write("run: command arguments are too long.\n");
-        break;
-    case PROCESS_START_NOT_FOUND:
-        terminal_write("run: executable not found: ");
-        terminal_write(command);
-        terminal_write("\n");
-        break;
-    case PROCESS_START_TOO_LARGE:
-        terminal_write("run: executable exceeds the 64 KiB limit.\n");
-        break;
-    case PROCESS_START_DISK_ERROR:
-        terminal_write("run: failed to read executable from disk.\n");
-        break;
-    case PROCESS_START_INVALID_EXECUTABLE:
-        terminal_write("run: invalid MEXE executable.\n");
-        break;
-    case PROCESS_START_NO_MEMORY:
-        terminal_write("run: could not allocate executable memory.\n");
-        break;
-    default:
-        if (result == PROCESS_START_LIMIT_REACHED)
-        {
-            terminal_write("run: process limit reached (8 processes).\n");
-        }
-        else
-        {
-            terminal_write("run: failed to release process mappings.\n");
-        }
-        break;
-    }
-}
-
 static void shell_memory_report(void)
 {
     const unsigned int test_virtual_address = 0x7F000000;
@@ -356,10 +150,8 @@ void shell_run_service(
 
 void __cdecl kernel_main(void)
 {
-    char command[COMMAND_BUFFER_SIZE];
-    unsigned char shift_pressed = 0;
-    unsigned char caps_lock = 0;
-    unsigned char extended = 0;
+    unsigned int process_id;
+    enum ProcessStartResult result;
 
     kernel_log(KERNEL_LOG_INFO, "kernel", "booting");
     memory_initialize();
@@ -370,45 +162,23 @@ void __cdecl kernel_main(void)
 
     for (;;)
     {
-        unsigned int length = 0;
-        char character;
-
         while (process_has_foreground_process())
         {
         }
 
-        terminal_write_prompt("minios> ");
-
-        for (;;)
+        result = process_start("SHELL.EXE", "", &process_id, 0);
+        if (result != PROCESS_START_OK)
         {
-            character = keyboard_read_character(
-                &shift_pressed, &caps_lock, &extended);
-
-            if (character == '\n')
+            kernel_log_value(
+                KERNEL_LOG_ERROR,
+                "kernel",
+                "shell start failed with result",
+                (unsigned int)result);
+            terminal_write("kernel: could not start SHELL.EXE.\n");
+            for (;;)
             {
-                terminal_write("\n");
-                break;
-            }
-
-            if (character == '\b')
-            {
-                if (length != 0)
-                {
-                    --length;
-                    terminal_write_character('\b');
-                }
-                continue;
-            }
-
-            if (character >= ' ' && character <= '~' &&
-                length < COMMAND_BUFFER_SIZE - 1)
-            {
-                command[length++] = character;
-                terminal_write_character(character);
             }
         }
-
-        command[length] = '\0';
-        run_command(command);
+        kernel_log(KERNEL_LOG_INFO, "kernel", "shell started");
     }
 }

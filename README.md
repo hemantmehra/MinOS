@@ -60,7 +60,8 @@ boot sector is `src\boot.asm`; bundled program sources are in
 allocate/free physical pages and map, unmap, and translate virtual addresses.
 CPU exceptions halt safely, keyboard input is delivered through IRQ1, and a
 PS/2 mouse on IRQ12 moves the on-screen pointer. The PIT timer drives the
-round-robin scheduler in `src\process.c`. The shell and
+round-robin scheduler in `src\process.c`. The kernel starts the shell as a
+program (`SHELL.EXE`), and the shell and
 each loaded process run as one schedulable thread. The scheduler saves and
 restores complete general-register, segment-register, and interrupt contexts,
 and programs use `int 0x80` to print or exit. Kernel and sample programs are
