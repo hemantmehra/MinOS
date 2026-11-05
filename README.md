@@ -73,6 +73,15 @@ assembly under `build\programs\`, then assembled into an executable for the
 ext2 image. See [docs/high-language.md](docs/high-language.md) for syntax and
 built-in operations.
 
+Programs can also be written in a small C subset. `build.py` runs
+`tools\minc.py` (the `minc` compiler) on each `src\programs\*.c` file: it
+preprocesses `#include <minos.h>` from `src\programs\include`, generates NASM
+assembly that includes the runtime library `src\programs\runtime\minos_rt.asm`
+(MEXE header, entry point and `print`), and assembles it into `<NAME>.EXE`.
+`minc` supports `int`/`char`/`void`, pointers, functions, locals,
+`if`/`while`/`for`, string literals and common operators; library functions
+declared in `minos.h` are implemented in the runtime assembly.
+
 Processes currently run in ring 0 and share the kernel address space; they
 are preemptively scheduled but are not privilege-isolated. Root-directory
 executables use the MinOS `MEXE` format: a 12-byte header (`MEXE`, 32-bit

@@ -200,6 +200,30 @@ def main():
         raise RuntimeError("No .high program sources were found.")
 
     executables = []
+    minc = ROOT / "tools" / "minc.py"
+    for source in sorted((ROOT / "src" / "programs").glob("*.c")):
+        executable = PROGRAMS_DIRECTORY / f"{source.stem.upper()}.EXE"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(minc),
+                str(source),
+                "-o",
+                str(executable),
+                "-I",
+                str(ROOT / "src" / "programs" / "include"),
+                "--runtime",
+                str(ROOT / "src" / "programs" / "runtime" / "minos_rt.asm"),
+                "--asm",
+                str(PROGRAMS_DIRECTORY / f"{source.stem}.c.asm"),
+                "--nasm",
+                str(nasm),
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"minc failed to compile {source.name}.")
+        executables.append(executable)
     for source in program_sources:
         assembly = PROGRAMS_DIRECTORY / f"{source.stem}.asm"
         executable = PROGRAMS_DIRECTORY / f"{source.stem.upper()}.EXE"
