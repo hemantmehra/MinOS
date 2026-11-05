@@ -216,6 +216,23 @@ _parse_int:
     pop ebp
     ret
 
+; int key_char(int scancode, int shift): the character for a set 1 make code,
+; or 0 when the key has none. Uses the same tables as read_line.
+_key_char:
+    mov eax, [esp + 4]
+    cmp eax, 0x3A
+    jae .none
+    lea ecx, [edi + __rl_keys - image_start]
+    cmp dword [esp + 8], 0
+    je .lookup
+    add ecx, 0x3A
+.lookup:
+    movzx eax, byte [ecx + eax]
+    ret
+.none:
+    xor eax, eax
+    ret
+
 ; Scancode (set 1) to character tables: unshifted, then shifted.
 __rl_keys:
     db 0, 0

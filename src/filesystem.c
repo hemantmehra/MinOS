@@ -1625,6 +1625,37 @@ int filesystem_open_file(unsigned int owner, const char *path)
     return (int)(index + 1);
 }
 
+// Allocates a data block for a hole among the 12 direct pointers of an
+// open file and records it in the in-memory inode (the caller writes it).
+static int ext2_allocate_file_block(
+    const Ext2FileSystem *filesystem,
+    Ext2Inode *inode,
+    unsigned int logical_block,
+    unsigned int *physical_block)
+{
+    unsigned int group;
+    unsigned int number;
+    unsigned int bit;
+    unsigned int bitmap;
+    unsigned int index;
+
+    if (logical_block >= 12 ||
+        ext2_find_free_block(
+            filesystem, 0, &group, &number, &bit, &bitmap) <= 0 ||
+        !ext2_mark_allocated(filesystem, group, bitmap, bit, 0, 0))
+    {
+        return 0;
+    }
+    for (index = 0; index < 4; ++index)
+    {
+        inode->block_pointers[logical_block * 4 + index] =
+            (unsigned char)(number >> (8 * index));
+    }
+    inode->sectors += EXT2_BLOCK_SIZE / SECTOR_SIZE;
+    *physical_block = number;
+    return 1;
+}
+
 int filesystem_write_file(
     unsigned int owner,
     unsigned int handle,
@@ -1635,6 +1666,7 @@ int filesystem_write_file(
     unsigned int bytes_written = 0;
     unsigned int position;
     unsigned int new_size;
+    int allocated = 0;
 
     if (handle == 0 || handle > EXT2_FILE_STREAM_LIMIT ||
         (buffer == 0 && length != 0) || length > 256)
@@ -1672,9 +1704,25 @@ int filesystem_write_file(
         }
         if (!ext2_get_inode_block(
                 &stream->filesystem, &stream->inode, logical_block,
-                &physical_block) ||
-            physical_block == 0 ||
-            !ext2_read_block(
+                &physical_block))
+        {
+            break;
+        }
+        if (physical_block == 0)
+        {
+            if (!ext2_allocate_file_block(
+                    &stream->filesystem, &stream->inode, logical_block,
+                    &physical_block))
+            {
+                break;
+            }
+            allocated = 1;
+            for (index = 0; index < EXT2_BLOCK_SIZE; ++index)
+            {
+                ((volatile unsigned char *)block)[index] = 0;
+            }
+        }
+        else if (!ext2_read_block(
                 &stream->filesystem, physical_block, block))
         {
             break;
@@ -1693,7 +1741,7 @@ int filesystem_write_file(
         position += chunk_size;
     }
 
-    if (bytes_written == 0)
+    if (bytes_written == 0 && !allocated)
     {
         return -1;
     }
@@ -1701,7 +1749,7 @@ int filesystem_write_file(
     new_size = position > stream->inode.size
         ? position
         : stream->inode.size;
-    if (new_size != stream->inode.size)
+    if (new_size != stream->inode.size || allocated)
     {
         stream->inode.size = new_size;
         if (!ext2_write_inode(&stream->filesystem, &stream->inode))
@@ -1709,7 +1757,7 @@ int filesystem_write_file(
             return -1;
         }
     }
-    return (int)bytes_written;
+    return bytes_written == 0 ? -1 : (int)bytes_written;
 }
 
 int filesystem_truncate_file(unsigned int owner, unsigned int handle)

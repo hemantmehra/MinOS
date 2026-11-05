@@ -60,7 +60,10 @@ QEMU appends structured kernel logs from the debug console to
 
 **Storage**
 - ext2 filesystem (1 KiB blocks) with directory listing, file reads and
-  writes within preallocated capacity, and directory creation.
+  writes that can grow a file up to 12 direct blocks, and directory creation.
+- `minedit <file>`: command-line text editor (Ctrl+W writes, Ctrl+X exits,
+  status line at the bottom). It edits existing `B:` files up to 1000
+  characters.
 - Two disks: the system disk (`A:`, `build\disks\system.img`) and an 8 MiB
   persistent data disk (`B:`, `build\disks\data.img`). Drive-letter paths and
   relative paths with `.` and `..` are supported.

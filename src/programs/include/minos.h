@@ -16,6 +16,10 @@ int parse_int(const char *text, int offset);
 /* Returns a pending keyboard scancode, or 0 when no key is available. */
 int read_key(void);
 
+/* Returns the character for a set 1 key-press scancode (shift selects the
+   shifted table), or 0 if the key has no printable character. */
+int key_char(int scancode, int shift);
+
 /* Returns a pseudo-random number in [0, limit). */
 int random(int limit);
 
