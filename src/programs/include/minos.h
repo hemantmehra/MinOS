@@ -1,6 +1,10 @@
 #ifndef MINOS_H
 #define MINOS_H
 
+/* Programs may declare `int main(int argc, char *argv[])`. The runtime splits
+   the command line on spaces: argv[0] is an empty string, argv[1..] are the
+   arguments (at most 15). Plain `int main()` is also accepted. */
+
 /* Prints prompt, then reads a line of at most max (<= 127) characters from
    the keyboard. Returns a pointer to a static buffer. */
 char *read_line(const char *prompt, int max);
@@ -36,7 +40,6 @@ int write_file(int handle, int *buffer, int length);
 int truncate_file(int handle);
 int get_current_directory(int *path);         /* path: 128 elements */
 int change_directory(void);
-int read_arguments(int *arguments);           /* arguments: 128 elements */
 
 /* Standard streams: 0 = input, 1 = output. */
 int read_stream(int handle, int *buffer);     /* buffer: 256 elements */

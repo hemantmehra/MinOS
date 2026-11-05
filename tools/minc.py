@@ -342,6 +342,9 @@ class Compiler:
                 param_name = ""
                 if self.peek()[0] == "identifier":
                     param_name = self.expect_identifier()
+                if self.accept("["):
+                    self.expect("]")
+                    param_type = (param_type[0], param_type[1] + 1)
                 params.append((param_type, param_name))
                 if not self.accept(","):
                     break

@@ -1,13 +1,12 @@
 #include <stdio.h>
 #include <minos.h>
 
-int main() {
-    int path[128];
+int main(int argc, char *argv[]) {
     int name[256];
+    char *path = "";
 
-    if (read_arguments(path) < 0) {
-        printf("ls: path argument is too long.\n");
-        return 0;
+    if (argc > 1) {
+        path = argv[1];
     }
 
     int directory = opendir(path);

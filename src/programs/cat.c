@@ -1,16 +1,15 @@
 #include <stdio.h>
 #include <minos.h>
 
-int main() {
-    int path[128];
+int main(int argc, char *argv[]) {
     int contents[256];
 
-    if (read_arguments(path) <= 0) {
+    if (argc < 2) {
         printf("Usage: cat <file>\n");
         return 0;
     }
 
-    int file = open_file(path);
+    int file = open_file(argv[1]);
     if (file < 0) {
         printf("cat: could not open file.\n");
         return 0;

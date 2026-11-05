@@ -19,6 +19,53 @@ __get_image_base:
     fnstcw [edi + __rt_cw - image_start]
     or word [edi + __rt_cw - image_start], 0x0C00
     fldcw [edi + __rt_cw - image_start]
+    ; Build argc/argv from the command line. The kernel copies the arguments
+    ; into a stack buffer of 128 ints; the tokens are copied as NUL-terminated
+    ; strings into the image. argv[0] is an empty string.
+    sub esp, 512
+    mov ecx, esp
+    mov edx, 128
+    mov eax, 15
+    int 0x80
+    lea ebx, [edi + __rt_argbuf - image_start]
+    mov byte [ebx], 0
+    lea edx, [edi + __rt_argv - image_start]
+    mov [edx], ebx
+    inc ebx
+    mov ecx, 1
+    mov esi, esp
+    test eax, eax
+    js .args_done
+.arg_skip:
+    mov eax, [esi]
+    cmp eax, ' '
+    jne .arg_check
+    add esi, 4
+    jmp .arg_skip
+.arg_check:
+    test eax, eax
+    jz .args_done
+    cmp ecx, 16
+    jae .args_done
+    mov [edx + ecx * 4], ebx
+    inc ecx
+.arg_copy:
+    mov eax, [esi]
+    test eax, eax
+    jz .arg_end
+    cmp eax, ' '
+    je .arg_end
+    mov [ebx], al
+    inc ebx
+    add esi, 4
+    jmp .arg_copy
+.arg_end:
+    mov byte [ebx], 0
+    inc ebx
+    jmp .arg_skip
+.args_done:
+    push edx
+    push ecx
     call _main
     mov eax, 0
     int 0x80
@@ -306,6 +353,8 @@ __rt_putnum:
     ret
 
 __rt_cw: dw 0
+__rt_argv: times 17 dd 0
+__rt_argbuf: times 256 db 0
 __rt_half: dd 0x3F000000
 __rt_char: db 0, 0
 __rt_digits: times 11 db 0

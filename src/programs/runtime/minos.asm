@@ -59,7 +59,6 @@ SYS0 end_graphics_mode, 10
 SYS1 opendir, 12
 SYS1 closedir, 13
 SYSBUF read_dir, 14, 256
-SYSOUT read_arguments, 15, 128
 SYSOUT get_current_directory, 16, 128
 SYS0 change_directory, 17
 SYS1 open_file, 18

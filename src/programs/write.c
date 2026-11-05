@@ -1,41 +1,35 @@
 #include <stdio.h>
 #include <minos.h>
 
-int main() {
-    int arguments[128];
+int main(int argc, char *argv[]) {
     int contents[256];
 
-    if (read_arguments(arguments) < 0) {
+    if (argc < 3) {
         printf("Usage: write B:/file <text>\n");
         return 0;
-    }
-
-    int index = 0;
-    while (arguments[index] != 0 && arguments[index] != ' ') {
-        index++;
-    }
-    if (arguments[index] == 0) {
-        printf("Usage: write B:/file <text>\n");
-        return 0;
-    }
-    arguments[index] = 0;
-    index++;
-    while (arguments[index] == ' ') {
-        index++;
     }
 
     int length = 0;
-    while (arguments[index] != 0 && length < 256) {
-        contents[length] = arguments[index];
-        length++;
-        index++;
-    }
-    if (arguments[index] != 0) {
-        printf("write: text is limited to 256 bytes.\n");
-        return 0;
+    for (int arg = 2; arg < argc; arg++) {
+        if (arg > 2) {
+            if (length >= 256) {
+                printf("write: text is limited to 256 bytes.\n");
+                return 0;
+            }
+            contents[length] = ' ';
+            length++;
+        }
+        for (int index = 0; argv[arg][index] != 0; index++) {
+            if (length >= 256) {
+                printf("write: text is limited to 256 bytes.\n");
+                return 0;
+            }
+            contents[length] = argv[arg][index];
+            length++;
+        }
     }
 
-    int handle = open_file(arguments);
+    int handle = open_file(argv[1]);
     if (handle < 0) {
         printf("write: could not open file. Use an existing B: file.\n");
         return 0;
