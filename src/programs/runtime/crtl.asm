@@ -260,6 +260,16 @@ _starts_with:
     pop ebp
     ret
 
+; int putchar(int c): writes one character to standard output.
+_putchar:
+    push ebx
+    mov ebx, [esp + 8]
+    mov eax, 11
+    int 0x80
+    mov eax, [esp + 8]
+    pop ebx
+    ret
+
 ; Writes the character in AL. Preserves all registers except EAX.
 __rt_putc:
     push ebx

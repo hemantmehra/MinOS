@@ -70,18 +70,16 @@ QEMU appends structured kernel logs from the debug console to
 - `MEXE` format: a 12-byte header (`MEXE`, 32-bit image size, 32-bit entry
   offset) followed by flat, relocatable 32-bit code; images up to 64 KiB are
   loaded from the ext2 root directory.
-- Programs under `src\programs\` are built by `build.py` using two compilers:
-  - **High** (`*.high`, `tools\high_compiler.py`): a small procedural language.
-    See [docs/high-language.md](docs/high-language.md).
-  - **minc** (`*.c`, `tools\minc.py`): a minimal C compiler that preprocesses
-    `#include`, flag `#define` and `#ifndef/#ifdef/#endif`, generates NASM
-    assembly and links it with the runtime in `src\programs\runtime\`
-    (`crtl.asm` is the C runtime: entry point, `printf`, `strcmp`,
-    `starts_with`; `minos.asm` has MinOS helpers such as `read_line` and
-    `parse_int`). Headers live in `src\programs\include\`. The supported
-    subset covers `int`/`char`/`void`/`float`, pointers, local arrays and
-    structs, `if`/`while`/`for`/`switch`, compound assignment and
-    `++`/`--`.
+- All programs under `src\programs\*.c` are built by `build.py` with
+  **minc** (`tools\minc.py`), a minimal C compiler that preprocesses
+  `#include`, flag `#define` and `#ifndef/#ifdef/#endif`, generates NASM
+  assembly and links it with the runtime in `src\programs\runtime\`
+  (`crtl.asm` is the C runtime: entry point, `printf`, `putchar`, `strcmp`,
+  `starts_with`; `minos.asm` wraps the MinOS system calls and provides
+  `read_line` and `parse_int`). Headers live in `src\programs\include\`. The
+  supported subset covers `int`/`char`/`void`/`float`, pointers, local arrays
+  and structs, `if`/`while`/`for`/`switch`, compound assignment and
+  `++`/`--`.
 
 **Shell**
 - Built-in `echo`; every other command is a program in the image, run by

@@ -1,75 +1,81 @@
-fn main() {
-    array line_numbers[16];
-    array program_text[2048];
-    array variables[26];
-    array values[128];
-    array operators[128];
-    array statement[132];
-    let input = 0;
-    let line_count = 0;
-    let finished = 0;
-    let input_position = 0;
-    let line_number = 0;
-    let digit = 0;
-    let line_index = 0;
-    let existing_line = -1;
-    let insert_at = 0;
-    let copy_index = 0;
-    let text_length = 0;
-    let command_kind = 0;
-    let execution_mode = 0;
-    let current_line = -1;
-    let next_line = 0;
-    let step_count = 0;
-    let halted = 0;
-    let valid = 1;
-    let character = 0;
-    let quote_closed = 0;
-    let variable_index = 0;
-    let expression_mode = 0;
-    let expression_phase = 0;
-    let expression_position = 0;
-    let expression_valid = 1;
-    let expression_active = 0;
-    let expect_operand = 1;
-    let value_count = 0;
-    let operator_count = 0;
-    let number = 0;
-    let operation = 0;
-    let precedence = 0;
-    let top_precedence = 0;
-    let left_value = 0;
-    let right_value = 0;
-    let expression_value = 0;
-    let reduction_active = 0;
-    let comparison = 0;
-    let condition = 0;
-    let destination = -1;
-    let target_number = 0;
-    let target_valid = 0;
-    let found = 0;
-    let result = 0;
-    let line_base = 0;
-    let shift_index = 0;
-    let command_length = 0;
-    let immediate = 0;
-    let quoted = 0;
-    let output_index = 0;
+#include <stdio.h>
+#include <string.h>
+#include <minos.h>
+
+/* Line-numbered BASIC interpreter: numbered lines, RUN, LIST, NEW, EXIT, PRINT,
+   LET, IF ... THEN, GOTO, REM, END, STOP and integer expressions. */
+int main() {
+    int line_numbers[16];
+    int program_text[2048];
+    int variables[26];
+    int values[128];
+    int operators[128];
+    int statement[132];
+    char *input = 0;
+    int line_count = 0;
+    int finished = 0;
+    int input_position = 0;
+    int line_number = 0;
+    int digit = 0;
+    int line_index = 0;
+    int existing_line = -1;
+    int insert_at = 0;
+    int copy_index = 0;
+    int text_length = 0;
+    int command_kind = 0;
+    int execution_mode = 0;
+    int current_line = -1;
+    int next_line = 0;
+    int step_count = 0;
+    int halted = 0;
+    int valid = 1;
+    int character = 0;
+    int quote_closed = 0;
+    int variable_index = 0;
+    int expression_mode = 0;
+    int expression_phase = 0;
+    int expression_position = 0;
+    int expression_valid = 1;
+    int expression_active = 0;
+    int expect_operand = 1;
+    int value_count = 0;
+    int operator_count = 0;
+    int number = 0;
+    int operation = 0;
+    int precedence = 0;
+    int top_precedence = 0;
+    int left_value = 0;
+    int right_value = 0;
+    int expression_value = 0;
+    int reduction_active = 0;
+    int comparison = 0;
+    int condition = 0;
+    int destination = -1;
+    int target_number = 0;
+    int target_valid = 0;
+    int found = 0;
+    int result = 0;
+    int line_base = 0;
+    int shift_index = 0;
+    int command_length = 0;
+    int immediate = 0;
+    int quoted = 0;
+    int output_index = 0;
 
     while (finished == 0) {
         input = read_line("basic> ", 127);
         command_kind = 0;
         input_position = 0;
-        while (string_char(input, input_position) == 32 ||
-            string_char(input, input_position) == 9) {
+        while (input[input_position] == 32 ||
+            input[input_position] == 9) {
             input_position = input_position + 1;
         }
 
-        if (string_char(input, input_position) == 0) {
+        if (input[input_position] == 0) {
         } else {
             line_number = 0;
             valid = 1;
-            character = string_char(input, input_position);
+            character = input[input_position];
             if (character >= 48 && character <= 57) {
                 while (character >= 48 && character <= 57) {
                     digit = character - 48;
@@ -79,7 +85,7 @@ fn main() {
                         line_number = line_number * 10 + digit;
                     }
                     input_position = input_position + 1;
-                    character = string_char(input, input_position);
+                    character = input[input_position];
                 }
 
                 if (line_number == 0 ||
@@ -90,7 +96,7 @@ fn main() {
                 if (valid != 0) {
                     while (character == 32 || character == 9) {
                         input_position = input_position + 1;
-                        character = string_char(input, input_position);
+                        character = input[input_position];
                     }
 
                     existing_line = -1;
@@ -120,7 +126,7 @@ fn main() {
                         }
                         command_kind = 6;
                     } else if (existing_line < 0 && line_count >= 16) {
-                        print("BASIC: program is full.\n");
+                        printf("BASIC: program is full.\n");
                         command_kind = 6;
                     } else {
                         if (existing_line >= 0) {
@@ -149,16 +155,16 @@ fn main() {
                         line_numbers[insert_at] = line_number;
                         line_base = insert_at * 128;
                         text_length = 0;
-                        character = string_char(input, input_position);
+                        character = input[input_position];
                         while (character != 0 && text_length < 127) {
                             program_text[line_base + text_length] = character;
                             text_length = text_length + 1;
                             input_position = input_position + 1;
-                            character = string_char(input, input_position);
+                            character = input[input_position];
                         }
                         program_text[line_base + text_length] = 0;
                         if (character != 0) {
-                            print("BASIC: line is too long.\n");
+                            printf("BASIC: line is too long.\n");
                         }
                         command_kind = 6;
                     }
@@ -170,22 +176,22 @@ fn main() {
             }
 
             if (command_kind == 0 && valid == 0) {
-                print("BASIC: invalid command.\n");
+                printf("BASIC: invalid command.\n");
                 command_kind = 6;
             }
 
             if (command_kind == 0 && valid != 0) {
-                if (equals(input, "run")) {
+                if ((strcmp(input, "run") == 0)) {
                     command_kind = 1;
                 } else {
-                    if (equals(input, "list")) {
+                    if ((strcmp(input, "list") == 0)) {
                         command_kind = 2;
                     } else {
-                        if (equals(input, "new")) {
+                        if ((strcmp(input, "new") == 0)) {
                             command_kind = 3;
                         } else {
-                            if (equals(input, "exit") ||
-                                equals(input, "quit")) {
+                            if ((strcmp(input, "exit") == 0) ||
+                                (strcmp(input, "quit") == 0)) {
                                 command_kind = 4;
                             } else {
                                 command_kind = 5;
@@ -209,23 +215,23 @@ fn main() {
                 if (command_kind == 2) {
                     line_index = 0;
                     while (line_index < line_count) {
-                        print_num(line_numbers[line_index]);
-                        print_char(32);
+                        printf("%d", line_numbers[line_index]);
+                        putchar(32);
                         copy_index = 0;
                         line_base = line_index * 128;
                         character = program_text[line_base + copy_index];
                         while (character != 0) {
-                            print_char(character);
+                            putchar(character);
                             copy_index = copy_index + 1;
                             character = program_text[line_base + copy_index];
                         }
-                        print("\n");
+                        printf("\n");
                         line_index = line_index + 1;
                     }
                 } else {
                     if (command_kind == 3) {
                         line_count = 0;
-                        print("BASIC: program cleared.\n");
+                        printf("BASIC: program cleared.\n");
                     } else {
                         if (command_kind == 4) {
                             finished = 1;
@@ -234,7 +240,7 @@ fn main() {
                                 copy_index = 0;
                                 while (copy_index < 128) {
                                     statement[copy_index] =
-                                        string_char(input, copy_index);
+                                        input[copy_index];
                                     copy_index = copy_index + 1;
                                 }
                                 statement[128] = 0;
@@ -255,7 +261,7 @@ fn main() {
                         execution_mode = 0;
                     } else {
                         if (step_count >= 10000) {
-                            print("BASIC: execution limit reached.\n");
+                            printf("BASIC: execution limit reached.\n");
                             execution_mode = 0;
                         } else {
                             step_count = step_count + 1;
@@ -354,7 +360,7 @@ fn main() {
                             quote_closed = 0;
                             while (statement[output_index] != 0 &&
                                 statement[output_index] != 34) {
-                                print_char(statement[output_index]);
+                                putchar(statement[output_index]);
                                 output_index = output_index + 1;
                             }
                             if (statement[output_index] == 34) {
@@ -369,7 +375,7 @@ fn main() {
                                 statement[output_index] != 0) {
                                 valid = 0;
                             } else {
-                                print("\n");
+                                printf("\n");
                             }
                         } else {
                             expression_mode = 1;
@@ -447,7 +453,7 @@ fn main() {
                                 line_index = line_index + 1;
                             }
                             if (found == 0) {
-                                print("BASIC: line not found.\n");
+                                printf("BASIC: line not found.\n");
                                 halted = 1;
                             }
                         }
@@ -717,8 +723,8 @@ fn main() {
                             if (statement[input_position] != 0) {
                                 valid = 0;
                             } else {
-                                print_num(expression_value);
-                                print("\n");
+                                printf("%d", expression_value);
+                                printf("\n");
                                 expression_mode = 0;
                             }
                         } else if (expression_mode == 2) {
@@ -839,7 +845,7 @@ fn main() {
                                             line_index = line_index + 1;
                                         }
                                         if (found == 0) {
-                                            print("BASIC: line not found.\n");
+                                            printf("BASIC: line not found.\n");
                                             halted = 1;
                                         }
                                     }
@@ -851,11 +857,11 @@ fn main() {
 
                     if (valid == 0) {
                         if (execution_mode == 1) {
-                            print("BASIC: error in line ");
-                            print_num(line_numbers[current_line]);
-                            print(".\n");
+                            printf("BASIC: error in line ");
+                            printf("%d", line_numbers[current_line]);
+                            printf(".\n");
                         } else {
-                            print("BASIC: invalid command.\n");
+                            printf("BASIC: invalid command.\n");
                         }
                         execution_mode = 0;
                     } else if (halted != 0) {
@@ -871,4 +877,5 @@ fn main() {
             }
         }
     }
+    return 0;
 }

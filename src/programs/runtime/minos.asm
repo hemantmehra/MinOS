@@ -1,6 +1,104 @@
 ; MinOS-specific runtime functions (declared in include/minos.h), included
 ; after crtl.asm. Same conventions: cdecl, result in EAX, EDI preserved.
 
+; System call wrappers. Kernel registers: EBX, ECX and EDX carry up to three
+; arguments, EAX is the service number and the result.
+%macro SYS0 2                   ; no arguments
+_%1:
+    mov eax, %2
+    int 0x80
+    ret
+%endmacro
+%macro SYS1 2                   ; EBX = arg0
+_%1:
+    push ebx
+    mov ebx, [esp + 8]
+    mov eax, %2
+    int 0x80
+    pop ebx
+    ret
+%endmacro
+%macro SYS3 2                   ; EBX = arg0, ECX = arg1, EDX = arg2
+_%1:
+    push ebx
+    mov ebx, [esp + 8]
+    mov ecx, [esp + 12]
+    mov edx, [esp + 16]
+    mov eax, %2
+    int 0x80
+    pop ebx
+    ret
+%endmacro
+%macro SYSBUF 3                 ; EBX = arg0, ECX = arg1 buffer, EDX = capacity
+_%1:
+    push ebx
+    mov ebx, [esp + 8]
+    mov ecx, [esp + 12]
+    mov edx, %3
+    mov eax, %2
+    int 0x80
+    pop ebx
+    ret
+%endmacro
+%macro SYSOUT 3                 ; ECX = arg0 buffer, EDX = capacity
+_%1:
+    mov ecx, [esp + 4]
+    mov edx, %3
+    mov eax, %2
+    int 0x80
+    ret
+%endmacro
+
+SYS0 clock, 4
+SYS0 memory_report, 5
+SYS0 process_list, 6
+SYS0 make_directory, 7
+SYS0 terminal_clear, 8
+SYS0 start_graphics_mode, 9
+SYS0 end_graphics_mode, 10
+SYS1 opendir, 12
+SYS1 closedir, 13
+SYSBUF read_dir, 14, 256
+SYSOUT read_arguments, 15, 128
+SYSOUT get_current_directory, 16, 128
+SYS0 change_directory, 17
+SYS1 open_file, 18
+SYSBUF read_file, 19, 256
+SYS1 close_file, 20
+SYSOUT read_pipe, 21, 256
+SYS3 write_file, 22
+SYS1 truncate_file, 23
+SYSBUF read_stream, 24, 256
+SYS3 write_stream, 25
+SYS0 kill_process, 26
+SYS1 clear_graphics, 27
+SYS0 present, 29
+SYS1 create_process, 30
+SYS1 wait_process, 31
+SYS3 create_window, 32
+SYS3 start_process, 33
+SYS0 read_key, 2
+
+; void draw_pixel(int x, int y, int color): EBX = x, EDX = y, ECX = color
+_draw_pixel:
+    push ebx
+    mov ebx, [esp + 8]
+    mov edx, [esp + 12]
+    mov ecx, [esp + 16]
+    mov eax, 28
+    int 0x80
+    pop ebx
+    ret
+
+; int random(int limit): a pseudo-random value in [0, limit).
+_random:
+    mov ecx, [esp + 4]
+    rdtsc
+    xor eax, edx
+    xor edx, edx
+    div ecx
+    mov eax, edx
+    ret
 ; char *read_line(const char *prompt, int max)
 _read_line:
     push ebp

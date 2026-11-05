@@ -1,7 +1,7 @@
 # Process loading and exit
 
 MinOS runs each executable as one schedulable thread. The kernel starts
-`SHELL.EXE` (built from `src/programs/shell.high`) at boot as an ordinary
+`SHELL.EXE` (built from `src/programs/shell.c`) at boot as an ordinary
 foreground process, and restarts it if it ever exits. The kernel's own
 scheduler task (task 0, named `kernel`) only idles and supervises the shell.
 Processes currently run in ring 0 and share the kernel address space; they are
@@ -108,10 +108,10 @@ is shared by shell-launched programs. Drive `A:` is the system disk and drive
 `B:/SAMPLE.TXT` select the corresponding disk. The kernel writes each entry name as
 integer character values into the caller's validated stack buffer. Open streams
 are released automatically when their owning process exits. Directory
-traversal, hidden-name filtering, and listing output are implemented in High;
+traversal, hidden-name filtering, and listing output are implemented in C;
 the services only open, read, and close streams.
 Drawing, terminal input, and BASIC parsing and interpretation are also
-implemented in High; kernel services expose graphics setup/restore, per-process
+implemented in C; kernel services expose graphics setup/restore, per-process
 window creation and double-buffered drawing, and character output. A process
 must create a window before starting graphics mode; attempting to start
 graphics without one reports an error to the shell and terminates the process.
@@ -175,6 +175,6 @@ capacity.
 
 The shell accepts a single pipeline (`program [args] | program [args]`). The
 producer's standard output becomes the consumer's standard input;
-`read_stream(STD_INPUT_HANDLE, buffer)` in High reads up to 256 bytes per call.
+`read_stream(STD_INPUT_HANDLE, buffer)` in C reads up to 256 bytes per call.
 The kernel uses one 16 KiB in-memory pipe buffer, so output exceeding its
 capacity before the consumer reads it terminates the producer with an error.

@@ -1,5 +1,0 @@
-fn main() {
-    if (change_directory() == 0) {
-        print("cd: could not change directory.\n");
-    }
-}

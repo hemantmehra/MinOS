@@ -194,14 +194,13 @@ def main():
     if result.returncode != 0:
         raise RuntimeError("NASM failed to assemble the boot sector.")
 
-    compiler = ROOT / "tools" / "high_compiler.py"
-    program_sources = sorted((ROOT / "src" / "programs").glob("*.high"))
+    program_sources = sorted((ROOT / "src" / "programs").glob("*.c"))
     if not program_sources:
-        raise RuntimeError("No .high program sources were found.")
+        raise RuntimeError("No .c program sources were found.")
 
     executables = []
     minc = ROOT / "tools" / "minc.py"
-    for source in sorted((ROOT / "src" / "programs").glob("*.c")):
+    for source in program_sources:
         executable = PROGRAMS_DIRECTORY / f"{source.stem.upper()}.EXE"
         result = subprocess.run(
             [
@@ -225,30 +224,6 @@ def main():
         )
         if result.returncode != 0:
             raise RuntimeError(f"minc failed to compile {source.name}.")
-        executables.append(executable)
-    for source in program_sources:
-        assembly = PROGRAMS_DIRECTORY / f"{source.stem}.asm"
-        executable = PROGRAMS_DIRECTORY / f"{source.stem.upper()}.EXE"
-        result = subprocess.run(
-            [sys.executable, str(compiler), str(source), str(assembly)],
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Failed to compile {source.name}.")
-
-        result = subprocess.run(
-            [
-                str(nasm),
-                "-f",
-                "bin",
-                "-o",
-                str(executable),
-                str(assembly),
-            ],
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"NASM failed to assemble {executable.name}.")
         executables.append(executable)
 
     python = sys.executable

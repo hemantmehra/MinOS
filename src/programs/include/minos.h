@@ -9,4 +9,51 @@ char *read_line(const char *prompt, int max);
    no digits or any non-digit character. */
 int parse_int(const char *text, int offset);
 
+/* Returns a pending keyboard scancode, or 0 when no key is available. */
+int read_key(void);
+
+/* Returns a pseudo-random number in [0, limit). */
+int random(int limit);
+
+/* Kernel services. Buffers passed to the kernel must be local int arrays
+   (one character per element) of at least the documented size. */
+
+void clock(void);
+void memory_report(void);
+void process_list(void);
+void make_directory(void);
+void terminal_clear(void);
+
+/* Filesystem. Paths are string literals or local int arrays of 128. Handle
+   functions return a negative value on failure. */
+int opendir(const void *path);
+int closedir(int handle);
+int read_dir(int handle, int *name);          /* name: 256 elements */
+int open_file(const void *path);
+int close_file(int handle);
+int read_file(int handle, int *buffer);       /* buffer: 256 elements */
+int write_file(int handle, int *buffer, int length);
+int truncate_file(int handle);
+int get_current_directory(int *path);         /* path: 128 elements */
+int change_directory(void);
+int read_arguments(int *arguments);           /* arguments: 128 elements */
+
+/* Standard streams: 0 = input, 1 = output. */
+int read_stream(int handle, int *buffer);     /* buffer: 256 elements */
+int write_stream(int handle, int *buffer, int length);
+
+/* Processes. */
+int create_process(const char *name);
+int start_process(const void *name, const void *arguments, int flags);
+int wait_process(int process_id);
+int kill_process(void);
+
+/* Graphics. A window is required before drawing. */
+int create_window(const char *title, int width, int height);
+void start_graphics_mode(void);
+void end_graphics_mode(void);
+void clear_graphics(int color);
+void draw_pixel(int x, int y, int color);
+void present(void);
+
 #endif
