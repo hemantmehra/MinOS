@@ -31,6 +31,7 @@ void memory_report(void);
 void process_list(void);
 void make_directory(void);
 void terminal_clear(void);
+void terminal_home(void);
 
 /* Filesystem. Paths are string literals or local int arrays of 128. Handle
    functions return a negative value on failure. */

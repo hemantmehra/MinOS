@@ -605,6 +605,11 @@ void terminal_clear(void)
     }
 }
 
+void terminal_home(void)
+{
+    vga_set_cursor_position(0);
+}
+
 static unsigned int pci_read_config(
     unsigned int bus,
     unsigned int device,
@@ -798,9 +803,20 @@ static void vga_render_glyph_to(
 {
     unsigned int row;
 
+    if (character == 255)
+    {
+        vga_fill_rectangle_to(
+            target, x, y, 8, VGA_TEXT_FONT_HEIGHT, foreground);
+        return;
+    }
+
     if (character >= VGA_TEXT_FONT_CHARACTERS)
     {
-        return;
+        unsigned char swap = foreground;
+
+        foreground = background;
+        background = swap;
+        character -= VGA_TEXT_FONT_CHARACTERS;
     }
 
     for (row = 0; row < VGA_TEXT_FONT_HEIGHT; ++row)

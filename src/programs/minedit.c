@@ -62,9 +62,26 @@ void print_name(char *name) {
     }
 }
 
+/* Blank the rest of a row; the cursor wraps to the next row by itself. */
+void pad_row(int col) {
+    while (col < 144) {
+        putchar(' ');
+        col++;
+    }
+}
+
+/* Blank the status row (all but the last cell, to avoid scrolling), then
+   return to its start. */
+void pad_status() {
+    for (int k = 0; k < 143; k++) {
+        putchar(' ');
+    }
+    putchar('\r');
+}
+
 void draw(int *text, int length, int cursor, int top, char *name,
           int status, int value, int dirty) {
-    terminal_clear();
+    terminal_home();
 
     int row = 0;
     int col = 0;
@@ -75,7 +92,13 @@ void draw(int *text, int length, int cursor, int top, char *name,
             ch = text[i];
         }
         if (i == cursor) {
-            putchar(219);
+            /* Codes 128-254 draw character (code - 128) inverted; 255 is a
+               solid block for the end of a line or file. */
+            if (i < length && ch != '\n' && ch >= 32 && ch < 127) {
+                putchar(ch + 128);
+            } else {
+                putchar(255);
+            }
             col++;
         } else if (i < length && ch != '\n') {
             putchar(ch);
@@ -86,17 +109,21 @@ void draw(int *text, int length, int cursor, int top, char *name,
             row++;
         }
         if (i < length && ch == '\n') {
-            putchar('\n');
+            pad_row(col);
             row++;
             col = 0;
         }
         i++;
     }
-    while (row < 35) {
-        putchar('\n');
+    if (col > 0 && row < 34) {
+        pad_row(col);
         row++;
     }
-
+    while (row < 35) {
+        pad_row(0);
+        row++;
+    }
+    pad_status();
     int line = 1;
     for (int k = 0; k < cursor; k++) {
         if (text[k] == '\n') {

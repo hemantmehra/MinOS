@@ -8,6 +8,7 @@ void terminal_write(const char *text);
 void terminal_write_prompt(const char *text);
 void terminal_write_unsigned(unsigned int value);
 void terminal_clear(void);
+void terminal_home(void);
 void video_terminal_restore(void);
 void video_initialize(void);
 void video_start_graphics(

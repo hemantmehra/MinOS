@@ -1332,6 +1332,14 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             }
         }
     }
+    else if (syscall_number == PROCESS_SERVICE_TERMINAL_HOME)
+    {
+        if (!process->background)
+        {
+            terminal_home();
+        }
+        saved_stack[11] = 0;
+    }
     else if (syscall_number == PROCESS_SERVICE_START_PROCESS)
     {
         char filename[128];
