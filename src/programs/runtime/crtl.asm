@@ -207,6 +207,59 @@ _printf:
     pop ebp
     ret
 
+; int strcmp(const char *a, const char *b): 0 when equal, otherwise the
+; difference of the first differing bytes.
+_strcmp:
+    push ebp
+    mov ebp, esp
+    push esi
+    push ebx
+    mov esi, [ebp + 8]
+    mov ebx, [ebp + 12]
+.loop:
+    movzx eax, byte [esi]
+    movzx ecx, byte [ebx]
+    sub eax, ecx
+    jnz .done
+    test ecx, ecx
+    jz .done
+    inc esi
+    inc ebx
+    jmp .loop
+.done:
+    pop ebx
+    pop esi
+    pop ebp
+    ret
+
+; int starts_with(const char *text, const char *prefix): 1 or 0.
+_starts_with:
+    push ebp
+    mov ebp, esp
+    push esi
+    push ebx
+    mov esi, [ebp + 8]
+    mov ebx, [ebp + 12]
+.loop:
+    movzx eax, byte [ebx]
+    test eax, eax
+    jz .yes
+    cmp al, [esi]
+    jne .no
+    inc esi
+    inc ebx
+    jmp .loop
+.yes:
+    mov eax, 1
+    jmp .done
+.no:
+    xor eax, eax
+.done:
+    pop ebx
+    pop esi
+    pop ebp
+    ret
+
 ; Writes the character in AL. Preserves all registers except EAX.
 __rt_putc:
     push ebx

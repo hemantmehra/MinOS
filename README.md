@@ -1,8 +1,7 @@
 # MinOS
 
-A tiny 32-bit x86 kernel with an interactive keyboard shell. MSVC builds the
-freestanding C kernel, NASM assembles a BIOS boot sector, and QEMU runs the
-resulting disk image.
+A tiny 32-bit x86 operating system. MSVC builds the freestanding C kernel,
+NASM assembles a BIOS boot sector, and QEMU runs the resulting disk image.
 
 MSVC produces Windows PE executables rather than the Multiboot ELF files
 accepted by QEMU's x86 `-kernel` option. The NASM BIOS boot sector loads the
@@ -19,167 +18,88 @@ project such as GRUB.
 
 ## Build and run
 
-From a terminal in this directory:
-
 ```text
 python build.py
 python run.py
 ```
 
 QEMU appends structured kernel logs from the debug console to
-`build\diagnostics\kernel.log`. Open that file in VS Code while MinOS is
-running to inspect boot, subsystem, filesystem, and process events. The log is
-preserved and appended across runs.
+`build\diagnostics\kernel.log`, preserved across runs.
 
-QEMU opens the kernel with a BIOS-backed PC. The kernel uses a 1280x720 VBE
-framebuffer with a 16-color palette. The desktop has a light-grey wallpaper
-and one fixed, non-closable shell window with a black terminal area and blue
-`minios>` prompt; all commands run from this shell. A taskbar at the bottom
-shows the shell and open graphics windows in fixed-width, left-aligned items,
-truncating long titles to 15 characters. Left-click a taskbar item or window
-to bring it to the front; drag a graphics window by its title bar to move it.
-The system disk contains an ext2
-filesystem populated with project files and directories. A separate 8 MiB
-ext2 data disk is attached as the secondary IDE drive at
-`build\disks\data.img`; its contents persist across normal builds and are
-available as drive `B:`. The system disk image is `build\disks\system.img` and
-is drive `A:`.
+## Features
 
-All operating-system source code is under `src\`. Kernel code is organized by
-subsystem: `src\kernel.c` handles shell dispatch, `src\video.c` renders the
-VGA terminal and pointer, `src\keyboard.c` reads keyboard input,
-`src\mouse.c` handles the PS/2 mouse, `src\filesystem.c`
-implements ext2 access, and `src\filesystem_directory.c` handles ext2
-directory creation. The filesystem APIs are declared in `src\filesystem.h`;
-`src\interrupts.c` sets up the IDT and keyboard IRQ,
-`src\time.c` reads the
-CMOS real-time clock, `src\memory.c` initializes x86 paging and manages 4 KiB
-physical pages, and `src\shell_utils.c` provides shared shell helpers. The
-boot sector is `src\boot.asm`; bundled program sources are in
-`src\programs\`. Paging identity-maps the first 16 MiB and provides APIs to
-allocate/free physical pages and map, unmap, and translate virtual addresses.
-CPU exceptions halt safely, keyboard input is delivered through IRQ1, and a
-PS/2 mouse on IRQ12 moves the on-screen pointer. The PIT timer drives the
-round-robin scheduler in `src\process.c`. The kernel starts the shell as a
-program (`SHELL.EXE`), and the shell and
-each loaded process run as one schedulable thread. The scheduler saves and
-restores complete general-register, segment-register, and interrupt contexts,
-and programs use `int 0x80` to print or exit. Kernel and sample programs are
-built for IA-32 integer code without SIMD or floating-point state.
+**Boot and CPU**
+- BIOS boot sector that enters 32-bit protected mode and starts the kernel.
+- IDT with safe-halting CPU exception handlers; PIT timer, keyboard (IRQ1)
+  and PS/2 mouse (IRQ12) interrupts.
+- x86 paging with a 4 KiB physical page allocator and virtual mapping APIs
+  (the first 16 MiB is identity-mapped).
 
-Bundled applications use the procedural MinOS High language. Each
-`src\programs\*.high` source is compiled by `tools\high_compiler.py` into NASM
-assembly under `build\programs\`, then assembled into an executable for the
-ext2 image. See [docs/high-language.md](docs/high-language.md) for syntax and
-built-in operations.
+**Processes**
+- Preemptive round-robin scheduler that saves and restores full register,
+  segment and interrupt contexts. Processes run in ring 0 in the kernel
+  address space; they are not privilege-isolated.
+- The kernel starts the shell as an ordinary program (`SHELL.EXE`) and
+  restarts it if it exits. The shell parses commands and uses the
+  `start_process` and `wait_process` services to run other programs.
+- Foreground and background (`&`) processes, one pipe between programs
+  (`a | b`), `kill`, and child-process creation and waiting.
+- System calls through `int 0x80`: print, exit, keyboard scancode polling,
+  process, filesystem, time, window and graphics services.
 
-Programs can also be written in a small C subset. `build.py` runs
-`tools\minc.py` (the `minc` compiler) on each `src\programs\*.c` file: it
-preprocesses `#include <stdio.h>` from `src\programs\include`, generates NASM
-assembly that includes the runtime library `src\programs\runtime\crtl.asm`
-(MEXE header, entry point and `printf` with `%d %u %x %c %s %f %.Nf %%`), and
-assembles it into `<NAME>.EXE`. `minc` supports `int`/`char`/`void`/`float`,
-pointers and pointer arithmetic, local arrays and structs (with `{...}`
-initializers, `.` and `->`), functions, `if`/`while`/`for`/`switch`,
-compound assignment, `++`/`--`, string literals and common operators; library
-functions declared in the headers are implemented in the runtime assembly.
+**Graphics and desktop**
+- 1280x720 VBE framebuffer with a 16-color palette.
+- Desktop with a light-grey wallpaper, a fixed non-closable shell window and a
+  taskbar showing every window in fixed-width, left-aligned items (titles are
+  truncated to 15 characters).
+- Per-process window handles: programs create windows and draw into them, and
+  a process without a window cannot enter graphics mode.
+- PS/2 mouse pointer; left-click to raise a window or select it from the
+  taskbar, and drag windows by their title bars. Rendering is double-buffered
+  to avoid flicker.
 
-Processes currently run in ring 0 and share the kernel address space; they
-are preemptively scheduled but are not privilege-isolated. Root-directory
-executables use the MinOS `MEXE` format: a 12-byte header (`MEXE`, 32-bit
-image size, and 32-bit entry offset) followed by flat 32-bit x86 code. The
-kernel loads images up to 64 KiB from the ext2 root directory. The ext2
-filesystem uses 1 KiB blocks and is stored directly after the boot sector and
-kernel, without an MBR partition table. Kernel services expose directory
-streams and directory creation to the High-language programs.
-`src\programs\hello.high` is compiled to `HELLO.EXE` during the build and
-included in the image. Core interfaces are declared in `src\kernel.h`, process
-interfaces in `src\process.h`, and filesystem interfaces in
-`src\filesystem.h`. The print call uses `EAX=1` and a null-terminated string
-pointer in `EBX`; `EAX=0` exits
-the process. The `hostname`, `time`, `mem`, `ps`, `ls`, `pwd`, `cd`, `cat`, `mkdir`,
-`kill`, `clear`, `draw`, and `basic` commands are High-language programs
-which use kernel services for OS operations; `echo` remains a built-in shell
-command.
-The shell supports a single pipeline between programs, such as `ls | wc`.
-`src\programs\wc.high` compiles to `WC.EXE` and counts whitespace-separated
-words read from pipeline input.
-`src\programs\countdown.high` is compiled as `COUNTDOWN.EXE`; execute it to print
-the numbers 10 through 1.
-`src\programs\paint.high` is compiled as `PAINT.EXE`; execute `PAINT.EXE` to draw
-a red circle, green triangle, and blue rectangle. Press Escape to exit and
-restore the shell display. Applications can poll keyboard scancodes with
-`EAX=2` (returns a scancode in `EAX`, or zero when no key is available).
-`src\programs\factorial.high` is compiled as `FACTORIAL.EXE`; run it and enter
-a number from 0 to 12 to display its factorial.
-`src\programs\stack.high` is compiled as `STACK.EXE`; it provides `push <n>`,
-`pop`, `top`, and `exit` commands using a 100-element integer array.
-`src\programs\ball.high` is compiled as `BALL.EXE`; it creates a graphics
-window and animates a red ball that bounces off the window edges. Each launch
-chooses a random starting position and direction; press Escape to exit.
-`src\programs\p1.high` and `p2.high` demonstrate child-process creation and
-waiting; run `P1.EXE` to start `P2.EXE`, wait for it to exit, and then finish.
+**Storage**
+- ext2 filesystem (1 KiB blocks) with directory listing, file reads and
+  writes within preallocated capacity, and directory creation.
+- Two disks: the system disk (`A:`, `build\disks\system.img`) and an 8 MiB
+  persistent data disk (`B:`, `build\disks\data.img`). Drive-letter paths and
+  relative paths with `.` and `..` are supported.
+- Real-time clock access through the CMOS.
 
-Supported shell commands:
+**Executables and toolchain**
+- `MEXE` format: a 12-byte header (`MEXE`, 32-bit image size, 32-bit entry
+  offset) followed by flat, relocatable 32-bit code; images up to 64 KiB are
+  loaded from the ext2 root directory.
+- Programs under `src\programs\` are built by `build.py` using two compilers:
+  - **High** (`*.high`, `tools\high_compiler.py`): a small procedural language.
+    See [docs/high-language.md](docs/high-language.md).
+  - **minc** (`*.c`, `tools\minc.py`): a minimal C compiler that preprocesses
+    `#include`, flag `#define` and `#ifndef/#ifdef/#endif`, generates NASM
+    assembly and links it with the runtime in `src\programs\runtime\`
+    (`crtl.asm` is the C runtime: entry point, `printf`, `strcmp`,
+    `starts_with`; `minos.asm` has MinOS helpers such as `read_line` and
+    `parse_int`). Headers live in `src\programs\include\`. The supported
+    subset covers `int`/`char`/`void`/`float`, pointers, local arrays and
+    structs, `if`/`while`/`for`/`switch`, compound assignment and
+    `++`/`--`.
 
-- `echo <text>` prints its arguments.
-- `hostname` runs `HOSTNAME.EXE` and prints `minios`.
-- `time` runs `TIME.EXE` to display the current UTC date and time.
-- `mem` runs `MEM.EXE` to report free 4 KiB pages and test virtual mapping.
-- `ps` runs `PS.EXE` to list process/thread IDs and states.
-- Enter an executable name such as `HELLO.EXE` (or `HELLO`) to start it.
-  The included program prints a hello message and exits.
-- Enter `COUNTDOWN.EXE` to print 10 through 1.
-- Enter `FACTORIAL.EXE` and provide a number from 0 to 12 to calculate its
-  factorial.
-- Enter `STACK.EXE` to use a 100-item stack with `push <n>`, `pop`, `top`,
-  and `exit` commands.
-- Enter `BALL.EXE` to watch a red ball bounce from a randomized position and
-  direction. Press Escape to return to the shell.
-- Add `&` to run a process in the background without blocking the shell, for
-  example `ball &`. Use `kill <process-name>` to terminate a background
-  process, such as `kill ball`.
-- Enter `PAINT.EXE` to run the included drawing program. Press Escape to
-  return to the shell.
-- `ls [path]` runs `LS.EXE` to list the current directory or the requested
-  absolute or relative directory path. Entries beginning with `.` are hidden.
-- `pwd` runs `PWD.EXE` to print the current directory.
-- `cd <path>` runs `CD.EXE` to change the current directory. Paths may be
-  absolute or relative and support `.` and `..`.
-- `cat <file>` runs `CAT.EXE` to display a file using file stream services.
-- `A:/<path>` addresses the system disk and `B:/<path>` addresses the secondary
-  ext2 disk. For example, `A:/ball.exe` runs the system-disk executable,
-  `cat B:/SAMPLE.TXT` reads a data-disk file, and
-  `write B:/WRITE.TXT <text>` replaces the writable file's contents.
-  Writes are limited to the file's preallocated ext2 capacity.
-- `python tools\read_disk.py` lists the root of `build\disks\data.img`, or
-  `python tools\read_disk.py build\disks\data.img /SAMPLE.TXT` reads a file after
-  MinOS is shut down. The script can inspect any supported ext2 image.
-- `wc` runs `WC.EXE` to count whitespace-separated words from pipeline input.
-- `program [args] | program [args]` pipes one program's printed output to the
-  next program's standard input. For example, `ls | wc` counts visible
-  directory entries. Only one pipe is supported, and its in-memory buffer is
-  limited to 16 KiB.
-- `mkdir <path>` runs `MKDIR.EXE` to create a directory in the current or
-  specified path, including `B:/<name>` on the secondary disk. The final
-  name must contain 1-8 letters, digits, underscores, or hyphens.
-- `clear` runs `CLEAR.EXE` to clear the screen.
-- `draw` runs `DRAW.EXE`, which draws a red circle on white in High and uses
-  primitive graphics services. It draws into a back buffer and presents the
-  completed frame; press Escape to return to the shell.
-- `basic` runs `BASIC.EXE`, which opens a line-numbered BASIC interpreter.
-  The interpreter is implemented in High; it supports numbered lines,
-  `RUN`, `LIST`, `NEW`, `EXIT`, `PRINT`, `LET`, `IF ... THEN`, `GOTO`, `REM`,
-  `END`, `STOP`, and integer expressions.
+**Shell**
+- Built-in `echo`; every other command is a program in the image, run by
+  name with or without `.EXE`.
+- Command-line arguments, `&` for background jobs and a single `|` pipeline.
 
-The build keeps boot, kernel, program, disk, and diagnostic outputs in
-`build\boot`, `build\kernel`, `build\programs`, `build\disks`, and
-`build\diagnostics`. Its cleanup removes only generated build products,
-preserves the data disk, and moves legacy diagnostic captures into the
-diagnostics folder.
-`python tools\make_data_disk.py` explicitly recreates the secondary ext2 disk
-from `tools\data_files\`; this resets its contents. MSVC
-links the kernel at a fixed 32-bit address; keep the loaded code small and
-freestanding, without Windows APIs or C runtime dependencies.
-Rebuilding recreates the system disk and resets runtime-created directories,
-but preserves an existing secondary data disk.
+## Tools and layout
+
+- `src\` holds the OS: `kernel.c`, `video.c`, `keyboard.c`, `mouse.c`,
+  `interrupts.c`, `time.c`, `memory.c`, `process.c`, `filesystem*.c`,
+  `shell_utils.c` and `boot.asm`; interfaces are in the matching headers.
+- `python tools\read_disk.py [image [path]]` lists or reads files on any
+  supported ext2 image while MinOS is shut down.
+- `python tools\make_data_disk.py` recreates the data disk from
+  `tools\data_files\`, which resets its contents.
+- Build outputs go to `build\boot`, `build\kernel`, `build\programs`,
+  `build\disks` and `build\diagnostics`. Rebuilding recreates the system disk
+  but preserves an existing data disk.
+- MSVC links the kernel at a fixed 32-bit address; kernel code must stay
+  small and freestanding, without Windows APIs, a C runtime, SIMD or
+  floating-point state.

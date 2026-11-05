@@ -214,6 +214,8 @@ def main():
                 str(ROOT / "src" / "programs" / "include"),
                 "--runtime",
                 str(ROOT / "src" / "programs" / "runtime" / "crtl.asm"),
+                "--runtime",
+                str(ROOT / "src" / "programs" / "runtime" / "minos.asm"),
                 "--asm",
                 str(PROGRAMS_DIRECTORY / f"{source.stem}.c.asm"),
                 "--nasm",

@@ -942,14 +942,14 @@ class Compiler:
         ]
 
 
-def compile_c(source, include_dirs, runtime):
+def compile_c(source, include_dirs, runtimes):
     compiler = Compiler(tokenize(preprocess(source, include_dirs)))
     code = compiler.compile()
     return "\n".join(
         [
             "BITS 32",
             "ORG 0x40000000",
-            f'%include "{Path(runtime).resolve().as_posix()}"',
+            *[f'%include "{Path(r).resolve().as_posix()}"' for r in runtimes],
             "",
             code,
             *compiler.data_section(),
@@ -964,7 +964,10 @@ def main():
     parser.add_argument("source")
     parser.add_argument("-o", "--output", required=True, help="output .EXE")
     parser.add_argument("-I", dest="includes", action="append", default=[])
-    parser.add_argument("--runtime", required=True, help="runtime library .asm")
+    parser.add_argument(
+        "--runtime", required=True, action="append",
+        help="runtime library .asm (repeatable; the first has the header)",
+    )
     parser.add_argument("--nasm", default="nasm")
     parser.add_argument("--asm", help="where to write the generated assembly")
     arguments = parser.parse_args()
