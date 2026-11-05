@@ -1,6 +1,7 @@
 #include <minos.h>
 
 int main() {
-    print("Hello from C\n");
+    printf("Hello from C\n");
+    printf("Number for today : %d\n", 42);
     return 0;
 }

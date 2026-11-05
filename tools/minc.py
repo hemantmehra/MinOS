@@ -31,7 +31,7 @@ TOKEN_PATTERN = re.compile(
     r"|(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)"
     r'|(?P<string>"(?:\\.|[^"\\])*")'
     r"|(?P<char>'(?:\\.|[^'\\])')"
-    r"|(?P<operator><<|>>|<=|>=|==|!=|&&|\|\||[{}\[\]();,=+\-*/%<>!&|^~])"
+    r"|(?P<operator>\.\.\.|<<|>>|<=|>=|==|!=|&&|\|\||[{}\[\]();,=+\-*/%<>!&|^~])"
 )
 
 ESCAPES = {"n": 10, "r": 13, "t": 9, "0": 0, "\\": 92, "'": 39, '"': 34}
@@ -234,8 +234,12 @@ class Compiler:
         if not self.accept("("):
             self.error("only function declarations are supported at file scope")
         params = []
+        variadic = False
         if not self.accept(")"):
             while True:
+                if self.accept("..."):
+                    variadic = True
+                    break
                 param_type = self.parse_type()
                 if param_type == ("void", 0) and self.peek()[1] == ")":
                     break
@@ -247,9 +251,9 @@ class Compiler:
                     break
             self.expect(")")
         known = self.functions.get(name)
-        if known is not None and known[1] != len(params):
+        if known is not None and known[1:] != (len(params), variadic):
             self.error(f"conflicting declaration of {name}")
-        self.functions[name] = (return_type, len(params))
+        self.functions[name] = (return_type, len(params), variadic)
         if self.accept(";"):
             return
         if name in self.defined:
@@ -574,7 +578,7 @@ class Compiler:
     def parse_call(self, name):
         if name not in self.functions:
             self.error(f"call to undeclared function {name!r}")
-        return_type, count = self.functions[name]
+        return_type, count, variadic = self.functions[name]
         argument_codes = []
         if not self.accept(")"):
             while True:
@@ -585,8 +589,12 @@ class Compiler:
                 if not self.accept(","):
                     break
             self.expect(")")
-        if len(argument_codes) != count:
-            self.error(f"{name} expects {count} arguments, got {len(argument_codes)}")
+        if len(argument_codes) < count or (
+            not variadic and len(argument_codes) != count
+        ):
+            self.error(
+                f"{name} expects {count} arguments, got {len(argument_codes)}"
+            )
         for code in reversed(argument_codes):
             self.body.extend(code)
             self.emit("push eax")

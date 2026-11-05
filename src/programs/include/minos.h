@@ -1,6 +1,6 @@
 #ifndef MINOS_H
 #define MINOS_H
 
-int print(const char *str);
+int printf(const char *str, ...);
 
 #endif // MINOS_H

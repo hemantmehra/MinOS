@@ -77,7 +77,7 @@ Programs can also be written in a small C subset. `build.py` runs
 `tools\minc.py` (the `minc` compiler) on each `src\programs\*.c` file: it
 preprocesses `#include <minos.h>` from `src\programs\include`, generates NASM
 assembly that includes the runtime library `src\programs\runtime\minos_rt.asm`
-(MEXE header, entry point and `print`), and assembles it into `<NAME>.EXE`.
+(MEXE header, entry point and `printf` with `%d %u %x %c %s %%`), and assembles it into `<NAME>.EXE`.
 `minc` supports `int`/`char`/`void`, pointers, functions, locals,
 `if`/`while`/`for`, string literals and common operators; library functions
 declared in `minos.h` are implemented in the runtime assembly.
