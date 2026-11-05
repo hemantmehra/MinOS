@@ -4,18 +4,28 @@ Compiles a single C source file into a MinOS MEXE executable:
 
     .c -> minc -> .asm (includes the runtime library) -> NASM -> .EXE
 
-Supported subset: int/char/void (with `const` and pointers), functions with
-cdecl calls, local variables, if/else, while, for, break, continue, return,
-string and character literals, and the usual arithmetic, comparison, logical,
-bitwise, assignment, `*p`, `p[i]` and `&local` expressions. `#include <...>`,
-`#include "..."`, flag `#define NAME` and `#ifndef/#ifdef/#endif` are handled.
-Declarations without a body (such as those in minos.h) refer to functions
-supplied by the runtime library, which uses the cdecl convention, returns in
-EAX, preserves EDI (the image base) and is named with a leading underscore.
+Supported subset:
+
+- types: int, char, void, float (32-bit, x87), pointers, local arrays and
+  structs (`struct Name { ... };` at file scope; fields are 4-byte aligned);
+- functions with cdecl calls, variadic declarations (`...`), recursion;
+- statements: locals with initializers (including `{...}` lists for arrays and
+  structs), if/else, while, for, switch/case/default, break, continue, return;
+- expressions: arithmetic, comparison, logical, bitwise, assignment and
+  compound assignment, `++`/`--`, `*p`, `&lvalue`, `p[i]`, `s.f`, `p->f`,
+  pointer arithmetic, string, character and float literals. Float arguments to
+  variadic functions are promoted to double as in C.
+
+`#include <...>`, `#include "..."`, flag `#define NAME` and
+`#ifndef/#ifdef/#endif` are handled. Declarations without a body (such as
+those in stdio.h) refer to functions supplied by the runtime library, which
+uses the cdecl convention, returns in EAX, preserves EDI (the image base) and
+is named with a leading underscore.
 """
 
 import argparse
 import re
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -27,15 +37,20 @@ class CompileError(Exception):
 
 TOKEN_PATTERN = re.compile(
     r"\s+"
+    r"|(?P<float>[0-9]+\.[0-9]+[fF]?)"
     r"|(?P<number>0[xX][0-9a-fA-F]+|[0-9]+)"
     r"|(?P<identifier>[A-Za-z_][A-Za-z0-9_]*)"
     r'|(?P<string>"(?:\\.|[^"\\])*")'
     r"|(?P<char>'(?:\\.|[^'\\])')"
-    r"|(?P<operator>\.\.\.|<<|>>|<=|>=|==|!=|&&|\|\||[{}\[\]();,=+\-*/%<>!&|^~])"
+    r"|(?P<operator>\.\.\.|\+\+|--|\+=|-=|\*=|/=|->|<<|>>|<=|>=|==|!=|&&|\|\|"
+    r"|[{}\[\]();,=+\-*/%<>!&|^~.:])"
 )
 
 ESCAPES = {"n": 10, "r": 13, "t": 9, "0": 0, "\\": 92, "'": 39, '"': 34}
-TYPE_KEYWORDS = {"int", "char", "void", "const", "unsigned", "long", "short"}
+TYPE_KEYWORDS = {
+    "int", "char", "void", "float", "struct", "const", "unsigned", "long",
+    "short",
+}
 
 
 def preprocess(path, include_dirs, defined=None, stack=()):
@@ -133,13 +148,19 @@ def decode_literal(literal):
     return result
 
 
-# A type is (base, pointer_depth); only char* has byte-sized elements.
+# A type is (base, pointer_depth). Struct bases are "struct Name".
 INT = ("int", 0)
+CHAR = ("char", 0)
+FLOAT = ("float", 0)
 CHAR_POINTER = ("char", 1)
 
 
-def element_size(type_):
-    return 1 if type_ == CHAR_POINTER else 4
+def is_float(type_):
+    return type_ == FLOAT
+
+
+def is_struct(type_):
+    return type_[1] == 0 and type_[0].startswith("struct ")
 
 
 class Compiler:
@@ -149,6 +170,10 @@ class Compiler:
         "+": 9, "-": 9, "*": 10, "/": 10, "%": 10,
     }
     SETCC = {"==": "e", "!=": "ne", "<": "l", "<=": "le", ">": "g", ">=": "ge"}
+    FLOAT_SETCC = {
+        "==": "e", "!=": "ne", "<": "b", "<=": "be", ">": "a", ">=": "ae",
+    }
+    COMPOUND = {"+=": "+", "-=": "-", "*=": "*", "/=": "/"}
 
     def __init__(self, tokens):
         self.tokens = tokens
@@ -156,12 +181,13 @@ class Compiler:
         self.lines = []
         self.strings = []
         self.functions = {}
+        self.structs = {}
         self.defined = set()
         self.labels = 0
         self.body = []
-        # (element size) when the last expression was a memory lvalue whose
-        # address is in ECX.
-        self.lvalue = None
+        # True when the last expression is an lvalue: its address is in ECX
+        # and its (loaded) value is in EAX.
+        self.lvalue = False
 
     # Token helpers
     def peek(self, offset=0):
@@ -199,7 +225,16 @@ class Compiler:
     def mark(self, label):
         self.body.append(label + ":")
 
-    # Declarations
+    # Types
+    def size_of(self, type_):
+        if type_[1] > 0:
+            return 4
+        if type_ == CHAR:
+            return 1
+        if is_struct(type_):
+            return self.structs[type_[0]][1]
+        return 4
+
     def at_type(self):
         token = self.peek()
         return token[0] == "identifier" and token[1] in TYPE_KEYWORDS
@@ -209,7 +244,12 @@ class Compiler:
         while self.at_type():
             word = self.peek()[1]
             self.position += 1
-            if word in ("int", "char", "void"):
+            if word == "struct":
+                name = "struct " + self.expect_identifier()
+                if name not in self.structs:
+                    self.error(f"unknown {name}")
+                base = name
+            elif word in ("int", "char", "void", "float"):
                 base = word
             elif word != "const" and base is None:
                 base = "int"
@@ -219,6 +259,34 @@ class Compiler:
             self.accept("const")
         return (base or "int", depth)
 
+    def load(self, type_):
+        """Loads the value at the address in ECX into EAX."""
+        if is_struct(type_):
+            self.emit("mov eax, ecx")
+        elif type_ == CHAR:
+            self.emit("movsx eax, byte [ecx]")
+        else:
+            self.emit("mov eax, [ecx]")
+
+    def store(self, type_):
+        """Stores EAX at the address in ECX."""
+        if is_struct(type_):
+            self.error("assigning whole structs is not supported")
+        self.emit("mov [ecx], al" if type_ == CHAR else "mov [ecx], eax")
+
+    def convert(self, source, target):
+        if is_float(target) and not is_float(source) and source[1] == 0:
+            self.emit("push eax")
+            self.emit("fild dword [esp]")
+            self.emit("fstp dword [esp]")
+            self.emit("pop eax")
+        elif is_float(source) and not is_float(target):
+            self.emit("push eax")
+            self.emit("fld dword [esp]")
+            self.emit("fistp dword [esp]")
+            self.emit("pop eax")
+
+    # Top level
     def compile(self):
         while self.peek()[0] != "eof":
             self.parse_external()
@@ -226,7 +294,35 @@ class Compiler:
             raise CompileError("program does not define main")
         return "\n".join(self.lines) + "\n"
 
+    def parse_struct_definition(self):
+        self.expect("struct")
+        name = "struct " + self.expect_identifier()
+        if self.accept(";"):
+            return
+        self.expect("{")
+        fields = {}
+        offset = 0
+        while not self.accept("}"):
+            field_type = self.parse_type()
+            while True:
+                depth = field_type[1]
+                while self.accept("*"):
+                    depth += 1
+                field = self.expect_identifier()
+                type_ = (field_type[0], depth)
+                fields[field] = (offset, type_)
+                offset += (self.size_of(type_) + 3) // 4 * 4
+                if not self.accept(","):
+                    break
+            self.expect(";")
+        self.expect(";")
+        self.structs[name] = (fields, offset)
+
     def parse_external(self):
+        if self.peek()[1] == "struct" and self.peek(1)[0] == "identifier" \
+                and self.peek(2)[1] in ("{", ";"):
+            self.parse_struct_definition()
+            return
         if not self.at_type():
             self.error("expected a declaration")
         return_type = self.parse_type()
@@ -251,27 +347,31 @@ class Compiler:
                     break
             self.expect(")")
         known = self.functions.get(name)
-        if known is not None and known[1:] != (len(params), variadic):
+        if known is not None and known[1:3] != (len(params), variadic):
             self.error(f"conflicting declaration of {name}")
-        self.functions[name] = (return_type, len(params), variadic)
+        self.functions[name] = (
+            return_type, len(params), variadic, [p[0] for p in params]
+        )
         if self.accept(";"):
             return
         if name in self.defined:
             self.error(f"redefinition of {name}")
         self.defined.add(name)
-        self.compile_function(name, params)
+        self.compile_function(name, return_type, params)
 
     # Functions and statements
-    def compile_function(self, name, params):
+    def compile_function(self, name, return_type, params):
         self.body = []
         self.scopes = [{}]
-        self.local_count = 0
+        self.local_bytes = 0
         self.loops = []
+        self.switches = []
+        self.return_type = return_type
         self.return_label = self.label("return")
         for index, (param_type, param_name) in enumerate(params):
             if not param_name:
                 self.error("parameter name omitted in definition")
-            self.scopes[0][param_name] = (8 + 4 * index, param_type)
+            self.scopes[0][param_name] = (8 + 4 * index, param_type, None)
         self.expect("{")
         self.parse_block_body()
         self.emit("xor eax, eax")
@@ -282,8 +382,8 @@ class Compiler:
         self.lines.append(f"_{name}:")
         self.lines.append("    push ebp")
         self.lines.append("    mov ebp, esp")
-        if self.local_count:
-            self.lines.append(f"    sub esp, {4 * self.local_count}")
+        if self.local_bytes:
+            self.lines.append(f"    sub esp, {self.local_bytes}")
         self.lines.extend(self.body)
         self.lines.append("")
 
@@ -295,15 +395,34 @@ class Compiler:
             self.parse_statement()
         self.scopes.pop()
 
-    def declare(self, name, type_):
-        self.local_count += 1
-        self.scopes[-1][name] = (-4 * self.local_count, type_)
+    def allocate(self, size):
+        self.local_bytes += (size + 3) // 4 * 4
+        return -self.local_bytes
+
+    def declare(self, name, type_, array_length=None):
+        size = self.size_of(type_)
+        if array_length is not None:
+            size *= array_length
+        offset = self.allocate(size)
+        self.scopes[-1][name] = (offset, type_, array_length)
+        return offset
 
     def lookup(self, name):
         for scope in reversed(self.scopes):
             if name in scope:
                 return scope[name]
         self.error(f"undeclared variable {name!r}")
+
+    def parse_constant(self):
+        sign = -1 if self.accept("-") else 1
+        kind, value, _, _ = self.peek()
+        if kind == "number":
+            self.position += 1
+            return sign * int(value, 0)
+        if kind == "char":
+            self.position += 1
+            return sign * decode_literal(value)[0]
+        self.error("expected a constant")
 
     def parse_statement(self):
         if self.accept("{"):
@@ -340,11 +459,29 @@ class Compiler:
             self.mark(end)
         elif self.accept("for"):
             self.parse_for()
+        elif self.accept("switch"):
+            self.parse_switch()
+        elif self.accept("case"):
+            if not self.switches:
+                self.error("case outside of a switch")
+            value = self.parse_constant()
+            self.expect(":")
+            label = self.label("case")
+            self.mark(label)
+            self.switches[-1]["cases"].append((value, label))
+        elif self.accept("default"):
+            if not self.switches:
+                self.error("default outside of a switch")
+            self.expect(":")
+            label = self.label("default")
+            self.mark(label)
+            self.switches[-1]["default"] = label
         elif self.accept("return"):
             if self.accept(";"):
                 self.emit("xor eax, eax")
             else:
-                self.parse_expression()
+                type_ = self.parse_expression()
+                self.convert(type_, self.return_type)
                 self.expect(";")
             self.emit(f"jmp {self.return_label}")
         elif self.peek()[0] == "identifier" and self.peek()[1] in ("break", "continue"):
@@ -352,13 +489,38 @@ class Compiler:
             self.position += 1
             self.expect(";")
             if not self.loops:
-                self.error(f"{word} outside of a loop")
-            self.emit(f"jmp {self.loops[-1][0 if word == 'continue' else 1]}")
+                self.error(f"{word} outside of a loop or switch")
+            target = self.loops[-1][0 if word == "continue" else 1]
+            if target is None:
+                self.error("continue outside of a loop")
+            self.emit(f"jmp {target}")
         elif self.accept(";"):
             pass
         else:
             self.parse_expression()
             self.expect(";")
+
+    def parse_switch(self):
+        self.expect("(")
+        self.parse_expression()
+        self.expect(")")
+        temp = self.allocate(4)
+        dispatch, end = self.label("dispatch"), self.label("endswitch")
+        self.emit(f"mov [ebp{temp:+d}], eax")
+        self.emit(f"jmp {dispatch}")
+        context = {"cases": [], "default": None}
+        self.switches.append(context)
+        self.loops.append((self.loops[-1][0] if self.loops else None, end))
+        self.parse_statement()
+        self.loops.pop()
+        self.switches.pop()
+        self.emit(f"jmp {end}")
+        self.mark(dispatch)
+        for value, label in context["cases"]:
+            self.emit(f"cmp dword [ebp{temp:+d}], {value}")
+            self.emit(f"je {label}")
+        self.emit(f"jmp {context['default'] or end}")
+        self.mark(end)
 
     def parse_local_declaration(self):
         base_type = self.parse_type()
@@ -367,13 +529,72 @@ class Compiler:
             while self.accept("*"):
                 depth += 1
             name = self.expect_identifier()
-            self.declare(name, (base_type[0], depth))
+            type_ = (base_type[0], depth)
+            array_length = None
+            unsized = False
+            if self.accept("["):
+                if self.peek()[0] == "number":
+                    array_length = int(self.peek()[1], 0)
+                    self.position += 1
+                else:
+                    unsized = True
+                self.expect("]")
             if self.accept("="):
-                self.parse_assignment()
-                self.emit(f"mov [ebp{self.lookup(name)[0]:+d}], eax")
+                if self.accept("{"):
+                    self.parse_initializer_list(
+                        name, type_, array_length, unsized
+                    )
+                else:
+                    if unsized:
+                        self.error("array size required")
+                    offset = self.declare(name, type_, array_length)
+                    init_type = self.parse_assignment()
+                    self.convert(init_type, type_)
+                    self.emit(
+                        f"mov [ebp{offset:+d}], "
+                        + ("al" if type_ == CHAR else "eax")
+                    )
+            else:
+                if unsized:
+                    self.error("array size required")
+                self.declare(name, type_, array_length)
             if not self.accept(","):
                 break
         self.expect(";")
+
+    def parse_initializer_list(self, name, type_, array_length, unsized):
+        elements = []
+        while not self.accept("}"):
+            saved, self.body = self.body, []
+            element_type = self.parse_assignment()
+            elements.append((self.body, element_type))
+            self.body = saved
+            if not self.accept(",") and self.peek()[1] != "}":
+                self.error("expected ',' or '}'")
+        if is_struct(type_) and array_length is None:
+            fields = sorted(
+                self.structs[type_[0]][0].values(), key=lambda f: f[0]
+            )
+            targets = fields
+        elif array_length is not None or unsized:
+            if unsized:
+                array_length = len(elements)
+            targets = [(i * self.size_of(type_), type_) for i in range(array_length)]
+        else:
+            self.error("initializer list requires an array or struct")
+        if len(elements) > len(targets):
+            self.error("too many initializers")
+        offset = self.declare(name, type_, array_length)
+        total = self.size_of(type_) * (array_length or 1)
+        for position in range(0, (total + 3) // 4 * 4, 4):
+            self.emit(f"mov dword [ebp{offset + position:+d}], 0")
+        for (code, element_type), (field_offset, field_type) in zip(elements, targets):
+            self.body.extend(code)
+            self.convert(element_type, field_type)
+            self.emit(
+                f"mov [ebp{offset + field_offset:+d}], "
+                + ("al" if field_type == CHAR else "eax")
+            )
 
     def parse_for(self):
         top, step = self.label("for"), self.label("forstep")
@@ -410,24 +631,29 @@ class Compiler:
         return self.parse_assignment()
 
     def parse_assignment(self):
-        token, following = self.peek(), self.peek(1)
-        if token[0] == "identifier" and following[0] == "operator" \
-                and following[1] == "=":
-            self.position += 2
-            offset, type_ = self.lookup(token[1])
-            self.parse_assignment()
-            self.emit(f"mov [ebp{offset:+d}], eax")
-            return type_
         type_ = self.parse_binary(0)
-        if self.peek()[0] == "operator" and self.peek()[1] == "=":
-            size = self.lvalue
-            if size is None:
+        token = self.peek()
+        if token[0] != "operator":
+            return type_
+        if token[1] == "=" or token[1] in self.COMPOUND:
+            if not self.lvalue:
                 self.error("left side of assignment is not assignable")
             self.position += 1
             self.emit("push ecx")
-            self.parse_assignment()
-            self.emit("pop ecx")
-            self.emit("mov [ecx], al" if size == 1 else "mov [ecx], eax")
+            if token[1] == "=":
+                right = self.parse_assignment()
+                self.convert(right, type_)
+                self.emit("pop ecx")
+            else:
+                self.emit("push eax")
+                right = self.parse_assignment()
+                self.emit("mov ecx, eax")
+                self.emit("pop eax")
+                result = self.emit_operator(self.COMPOUND[token[1]], type_, right)
+                self.convert(result, type_)
+                self.emit("pop ecx")
+            self.store(type_)
+            self.lvalue = False
         return type_
 
     def parse_binary(self, minimum):
@@ -453,14 +679,17 @@ class Compiler:
                 self.emit("mov ecx, eax")
                 self.emit("pop eax")
                 left = self.emit_operator(operator, left, right)
-            self.lvalue = None
+            self.lvalue = False
         return left
 
     def emit_operator(self, operator, left, right):
+        if is_float(left) or is_float(right):
+            return self.emit_float_operator(operator, left, right)
         result = INT
         if operator in ("+", "-") and left[1] > 0 and right[1] == 0:
-            if element_size(left) == 4:
-                self.emit("shl ecx, 2")
+            size = self.size_of((left[0], left[1] - 1))
+            if size != 1:
+                self.emit(f"imul ecx, ecx, {size}")
             result = left
         if operator == "+":
             self.emit("add eax, ecx")
@@ -489,64 +718,147 @@ class Compiler:
             self.emit("movzx eax, al")
         return result
 
+    def emit_float_operator(self, operator, left, right):
+        if not is_float(left):
+            self.convert(left, FLOAT)
+        if not is_float(right):
+            self.emit("xchg eax, ecx")
+            self.convert(right, FLOAT)
+            self.emit("xchg eax, ecx")
+        self.emit("push ecx")
+        self.emit("push eax")
+        if operator in ("+", "-", "*", "/"):
+            instruction = {"+": "fadd", "-": "fsub", "*": "fmul", "/": "fdiv"}
+            self.emit("fld dword [esp]")
+            self.emit(f"{instruction[operator]} dword [esp + 4]")
+            self.emit("fstp dword [esp]")
+            self.emit("pop eax")
+            self.emit("add esp, 4")
+            return FLOAT
+        if operator not in self.FLOAT_SETCC:
+            self.error(f"operator {operator!r} is not supported for float")
+        self.emit("fld dword [esp + 4]")
+        self.emit("fld dword [esp]")
+        self.emit("fcomip st0, st1")
+        self.emit("fstp st0")
+        self.emit("add esp, 8")
+        self.emit(f"set{self.FLOAT_SETCC[operator]} al")
+        self.emit("movzx eax, al")
+        return INT
+
     def parse_unary(self):
-        self.lvalue = None
+        self.lvalue = False
         if self.accept("-"):
-            self.parse_unary()
-            self.emit("neg eax")
-            self.lvalue = None
-            return INT
+            type_ = self.parse_unary()
+            if is_float(type_):
+                self.emit("xor eax, 0x80000000")
+            else:
+                self.emit("neg eax")
+            self.lvalue = False
+            return type_
         if self.accept("!"):
             self.parse_unary()
             self.emit("test eax, eax")
             self.emit("sete al")
             self.emit("movzx eax, al")
-            self.lvalue = None
+            self.lvalue = False
             return INT
         if self.accept("~"):
             self.parse_unary()
             self.emit("not eax")
-            self.lvalue = None
+            self.lvalue = False
             return INT
         if self.accept("+"):
             return self.parse_unary()
         if self.accept("*"):
             return self.dereference(self.parse_unary())
         if self.accept("&"):
-            offset, type_ = self.lookup(self.expect_identifier())
-            self.emit(f"lea eax, [ebp{offset:+d}]")
-            self.lvalue = None
+            type_ = self.parse_unary()
+            if self.lvalue:
+                self.emit("mov eax, ecx")
+            self.lvalue = False
             return (type_[0], type_[1] + 1)
+        if self.peek()[1] in ("++", "--") and self.peek()[0] == "operator":
+            operator = self.peek()[1]
+            self.position += 1
+            type_ = self.parse_unary()
+            self.increment(type_, operator, prefix=True)
+            return type_
         return self.parse_postfix()
+
+    def increment(self, type_, operator, prefix):
+        if not self.lvalue:
+            self.error(f"operand of {operator} is not assignable")
+        if is_float(type_):
+            self.error(f"{operator} is not supported for float")
+        step = self.size_of((type_[0], type_[1] - 1)) if type_[1] > 0 else 1
+        instruction = "add" if operator == "++" else "sub"
+        if not prefix:
+            self.emit("push eax")
+        self.emit(f"{instruction} eax, {step}")
+        self.store(type_)
+        if not prefix:
+            self.emit("pop eax")
+        self.lvalue = False
 
     def dereference(self, type_):
         if type_[1] == 0:
             self.error("cannot dereference a non-pointer")
-        size = element_size(type_)
+        target = (type_[0], type_[1] - 1)
         self.emit("mov ecx, eax")
-        self.emit("movsx eax, byte [ecx]" if size == 1 else "mov eax, [ecx]")
-        self.lvalue = size
-        return (type_[0], type_[1] - 1)
+        self.load(target)
+        self.lvalue = True
+        return target
 
     def parse_postfix(self):
         type_ = self.parse_primary()
-        while self.accept("["):
-            self.emit("push eax")
-            self.parse_expression()
-            self.expect("]")
-            if element_size(type_) == 4:
-                self.emit("shl eax, 2")
-            self.emit("pop ecx")
-            self.emit("add eax, ecx")
-            type_ = self.dereference(type_)
-        return type_
+        while True:
+            token = self.peek()
+            if self.accept("["):
+                self.emit("push eax")
+                self.parse_expression()
+                self.expect("]")
+                size = self.size_of((type_[0], type_[1] - 1))
+                if size != 1:
+                    self.emit(f"imul eax, eax, {size}")
+                self.emit("pop ecx")
+                self.emit("add eax, ecx")
+                type_ = self.dereference(type_)
+            elif token[1] in (".", "->") and token[0] == "operator":
+                self.position += 1
+                field = self.expect_identifier()
+                struct_type = type_ if token[1] == "." else (type_[0], type_[1] - 1)
+                if not is_struct(struct_type) or (
+                    token[1] == "->" and type_[1] != 1
+                ):
+                    self.error(f"{token[1]} applied to a non-struct")
+                fields = self.structs[struct_type[0]][0]
+                if field not in fields:
+                    self.error(f"{struct_type[0]} has no field {field!r}")
+                offset, type_ = fields[field]
+                if offset:
+                    self.emit(f"add eax, {offset}")
+                self.emit("mov ecx, eax")
+                self.load(type_)
+                self.lvalue = True
+            elif token[1] in ("++", "--") and token[0] == "operator":
+                self.position += 1
+                self.increment(type_, token[1], prefix=False)
+            else:
+                return type_
 
     def parse_primary(self):
+        self.lvalue = False
         kind, value, _, _ = self.peek()
         if kind == "number":
             self.position += 1
             self.emit(f"mov eax, {int(value, 0)}")
             return INT
+        if kind == "float":
+            self.position += 1
+            bits = struct.unpack("<I", struct.pack("<f", float(value.rstrip("fF"))))[0]
+            self.emit(f"mov eax, {bits:#x}")
+            return FLOAT
         if kind == "char":
             self.position += 1
             self.emit(f"mov eax, {decode_literal(value)[0]}")
@@ -564,26 +876,45 @@ class Compiler:
         if self.accept("("):
             type_ = self.parse_expression()
             self.expect(")")
-            self.lvalue = None
+            self.lvalue = False
             return type_
         if kind == "identifier":
             name = self.expect_identifier()
             if self.accept("("):
                 return self.parse_call(name)
-            offset, type_ = self.lookup(name)
-            self.emit(f"mov eax, [ebp{offset:+d}]")
+            offset, type_, array_length = self.lookup(name)
+            if array_length is not None:
+                self.emit(f"lea eax, [ebp{offset:+d}]")
+                return (type_[0], type_[1] + 1)
+            self.emit(f"lea ecx, [ebp{offset:+d}]")
+            self.load(type_)
+            self.lvalue = True
             return type_
         self.error(f"unexpected {value!r} in expression")
 
     def parse_call(self, name):
         if name not in self.functions:
             self.error(f"call to undeclared function {name!r}")
-        return_type, count, variadic = self.functions[name]
+        return_type, count, variadic, parameter_types = self.functions[name]
         argument_codes = []
+        pushed = 0
         if not self.accept(")"):
             while True:
                 saved, self.body = self.body, []
-                self.parse_assignment()
+                index = len(argument_codes)
+                type_ = self.parse_assignment()
+                if index < count:
+                    self.convert(type_, parameter_types[index])
+                if is_float(type_) and index >= count:
+                    # Variadic floats are promoted to double.
+                    self.emit("push eax")
+                    self.emit("fld dword [esp]")
+                    self.emit("sub esp, 4")
+                    self.emit("fstp qword [esp]")
+                    pushed += 8
+                else:
+                    self.emit("push eax")
+                    pushed += 4
                 argument_codes.append(self.body)
                 self.body = saved
                 if not self.accept(","):
@@ -597,11 +928,10 @@ class Compiler:
             )
         for code in reversed(argument_codes):
             self.body.extend(code)
-            self.emit("push eax")
         self.emit(f"call _{name}")
-        if argument_codes:
-            self.emit(f"add esp, {4 * len(argument_codes)}")
-        self.lvalue = None
+        if pushed:
+            self.emit(f"add esp, {pushed}")
+        self.lvalue = False
         return return_type
 
     def data_section(self):

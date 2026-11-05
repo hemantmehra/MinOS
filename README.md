@@ -75,12 +75,14 @@ built-in operations.
 
 Programs can also be written in a small C subset. `build.py` runs
 `tools\minc.py` (the `minc` compiler) on each `src\programs\*.c` file: it
-preprocesses `#include <minos.h>` from `src\programs\include`, generates NASM
+preprocesses `#include <stdio.h>` from `src\programs\include`, generates NASM
 assembly that includes the runtime library `src\programs\runtime\minos_rt.asm`
-(MEXE header, entry point and `printf` with `%d %u %x %c %s %%`), and assembles it into `<NAME>.EXE`.
-`minc` supports `int`/`char`/`void`, pointers, functions, locals,
-`if`/`while`/`for`, string literals and common operators; library functions
-declared in `minos.h` are implemented in the runtime assembly.
+(MEXE header, entry point and `printf` with `%d %u %x %c %s %f %.Nf %%`), and
+assembles it into `<NAME>.EXE`. `minc` supports `int`/`char`/`void`/`float`,
+pointers and pointer arithmetic, local arrays and structs (with `{...}`
+initializers, `.` and `->`), functions, `if`/`while`/`for`/`switch`,
+compound assignment, `++`/`--`, string literals and common operators; library
+functions declared in the headers are implemented in the runtime assembly.
 
 Processes currently run in ring 0 and share the kernel address space; they
 are preemptively scheduled but are not privilege-isolated. Root-directory
