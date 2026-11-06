@@ -134,6 +134,10 @@ after reboot.
   right of the title bar that ends the program.
 - Per-process window handles: programs create windows and draw into them, and
   a process without a window cannot enter graphics mode.
+- Run `breakout` for a brick-breaking game. Use the left and right arrow keys
+  to move the paddle, earn 10 points per brick, and use `R` to restart after
+  winning or losing. Escape or the window close button exits. Run it in the
+  foreground: background processes do not receive keyboard input.
 - PS/2 mouse pointer; left-click to raise a window or select it from the
   taskbar, and drag windows by their title bars. Rendering is double-buffered
   to avoid flicker.
