@@ -146,6 +146,11 @@ def run_msvc(developer_command):
         "interrupts.c",
         "memory.c",
         "process.c",
+        "process_io.c",
+        "process_user.c",
+        "process_start.c",
+        "process_syscall.c",
+        "process_query.c",
         "time.c",
         "shell_utils.c",
     )

@@ -105,7 +105,7 @@ QEMU appends structured kernel logs from the debug console to
 ## Tools and layout
 
 - `src\` holds the OS: `kernel.c`, `video.c`, `keyboard.c`, `mouse.c`,
-  `interrupts.c`, `time.c`, `memory.c`, `process.c`, `filesystem*.c`,
+  `interrupts.c`, `time.c`, `memory.c`, `process*.c`, `filesystem*.c`,
   `shell_utils.c` and `boot.asm`; interfaces are in the matching headers.
 - `python tools\read_disk.py [image [path]]` lists or reads files on any
   supported ext2 image while MinOS is shut down.
