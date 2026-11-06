@@ -104,6 +104,9 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `32` | Create a graphics window | `EBX` points to a non-empty null-terminated title in the caller's image, `ECX` is width (1-640), `EDX` is height (1-480); returns a handle or `0` |
 | `33` | Start a program | `EBX` points to a local array with the null-terminated program name, `ECX` to an array with its arguments (each at least 128 elements, one character per element), `EDX` is flags (`1` background, `2` stdout feeds a pipe, `4` stdin reads the pipe started by the preceding `2` call); returns the child PID (a child of the caller unless background) or the negated start error (`-1` invalid name, `-2` arguments too long, `-3` not found, `-4` too large, `-5` disk error, `-6` invalid executable, `-7` no memory, `-8` process limit, `-9` cleanup error) |
 | `35` | Sleep | `EBX` is the number of milliseconds (capped at 60000); the process is blocked until the 1000 Hz timer reaches the wake-up time and returns `0` |
+| `36` | Grow heap | Maps one zeroed 4 KiB user page, up to 16 MiB per process; returns its address or `0` on failure |
+| `37` | Check pipe EOF | Returns `1` when the caller's input pipe has been drained and its producer has closed, or `0` otherwise |
+| `38` | Seek file | `EBX` is a file handle, `ECX` a signed offset, and `EDX` is `0` (start), `1` (current), or `2` (end); returns the new position or `-1`. Positions beyond EOF are rejected |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;

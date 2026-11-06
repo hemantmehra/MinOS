@@ -49,12 +49,29 @@ python tools\build_elf.py src\elf_programs\hello.c -o build\programs\HELLO.EXE
 
 Pass multiple `.c` files before `-o` to link them into one program. The build
 also discovers LLVM extracted under `%LOCALAPPDATA%\MinOS\llvm-*\files\LLVM\bin`.
-The ELF runtime currently provides only `main(argc, argv)`, `putchar`, and a
-small `printf` (`%d`, `%i`, `%u`, `%x`, `%c`, `%s`, and `%%`). Arguments have
-the same space-separated limits and empty `argv[0]` as the existing runtime.
-This is not a POSIX or Linux runtime; MinOS-specific wrappers, a heap, floating
-point support, and the rest of libc are not yet provided for ELF programs.
-Run `python tests\test_elf_format.py` to test ELF header validation.
+ELF programs use a separate small C library in `src\elf`. It supplies byte
+string and memory functions, `malloc`/`calloc`/`realloc`/`free`, integer
+conversion, `errno`/`strerror`/`perror`, and unbuffered standard and file
+streams. `printf` and `fprintf` support `%d`, `%i`, `%u`, `%x`, `%c`, `%s`,
+and `%%`; width, precision and floating-point formats are not supported.
+The growable per-process heap is limited to 16 MiB and pages are released
+when the process exits.
+
+File streams currently **open existing files only**: `w` truncates an
+existing file and `a` appends to one. The underlying filesystem cannot yet
+create regular files; writing is supported only on `B:`, and seeks beyond
+end-of-file are rejected. File-open failures report `EIO` because the kernel
+does not yet distinguish missing files from other open errors. Console input
+has no EOF key; pipe input detects a closed producer. Exit status is not yet
+propagated to the parent. Arguments retain the existing space-separated limits
+and empty `argv[0]`. File growth is limited to 12 KiB, and simultaneous open
+streams of the same file do not provide coherent concurrent writes or atomic
+append. This is not a complete ISO C or POSIX library.
+
+Run `python tests\test_elf_format.py` to test ELF header validation. The
+`tests\libc_test.c` and `tests\libc_pipe.c` ELF programs exercise the C library;
+run the former only against a disposable data disk because it overwrites
+`B:\WRITE.TXT`.
 
 ## Features
 

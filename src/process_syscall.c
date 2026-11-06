@@ -265,6 +265,50 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             }
         }
     }
+    else if (syscall_number == PROCESS_SERVICE_SEEK_FILE)
+    {
+        saved_stack[11] = (unsigned int)filesystem_seek_file(
+            process->process_id, saved_stack[8],
+            (int)saved_stack[10], (int)saved_stack[9]);
+    }
+    else if (syscall_number == PROCESS_SERVICE_INPUT_EOF)
+    {
+        saved_stack[11] = process->input_pipe == 1 &&
+            process_pipe.active && !process_pipe.overflowed &&
+            process_pipe.producer_closed && process_pipe.buffered == 0;
+    }
+    else if (syscall_number == PROCESS_SERVICE_GROW_HEAP)
+    {
+        unsigned int physical;
+        unsigned int address;
+        unsigned int index;
+        volatile unsigned int *page;
+
+        saved_stack[11] = 0;
+        if (process->heap_pages < PROCESS_HEAP_PAGES)
+        {
+            physical = memory_allocate_page();
+            if (physical != 0)
+            {
+                address = PROCESS_HEAP_BASE + process->heap_pages * 4096;
+                page = (volatile unsigned int *)physical;
+                for (index = 0; index < 1024; ++index)
+                {
+                    page[index] = 0;
+                }
+                if (memory_map_page_in(
+                    process->page_directory, address, physical, USER_PAGE_FLAGS))
+                {
+                    ++process->heap_pages;
+                    saved_stack[11] = address;
+                }
+                else if (!memory_free_page(physical))
+                {
+                    kernel_log(KERNEL_LOG_ERROR, "process", "heap page release failed");
+                }
+            }
+        }
+    }
     else if (syscall_number == PROCESS_SERVICE_SLEEP)
     {
         unsigned int milliseconds = saved_stack[8];

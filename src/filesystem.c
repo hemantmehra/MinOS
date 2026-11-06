@@ -1760,6 +1760,44 @@ int filesystem_write_file(
     return bytes_written == 0 ? -1 : (int)bytes_written;
 }
 
+int filesystem_seek_file(
+    unsigned int owner, unsigned int handle, int offset, int whence)
+{
+    Ext2FileStream *stream;
+    unsigned int base;
+    unsigned int position;
+    unsigned int magnitude;
+
+    if (handle == 0 || handle > EXT2_FILE_STREAM_LIMIT)
+    {
+        return -1;
+    }
+    stream = &file_streams[handle - 1];
+    if (!stream->active || stream->owner != owner)
+    {
+        return -1;
+    }
+    if (whence == 0) base = 0;
+    else if (whence == 1) base = stream->position;
+    else if (whence == 2) base = stream->inode.size;
+    else return -1;
+    if (base > 0x7FFFFFFF) return -1;
+    if (offset < 0)
+    {
+        magnitude = 0U - (unsigned int)offset;
+        if (magnitude > base) return -1;
+        position = base - magnitude;
+    }
+    else
+    {
+        if ((unsigned int)offset > 0x7FFFFFFF - base) return -1;
+        position = base + (unsigned int)offset;
+    }
+    if (position > stream->inode.size) return -1;
+    stream->position = position;
+    return (int)position;
+}
+
 int filesystem_truncate_file(unsigned int owner, unsigned int handle)
 {
     Ext2FileStream *stream;

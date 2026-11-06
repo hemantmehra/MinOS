@@ -12,6 +12,8 @@
 #define PROCESS_STACK_PAGE_COUNT 4
 #define PROCESS_SLOT_SIZE 0x00200000
 #define PROCESS_BASE 0x40000000
+#define PROCESS_HEAP_BASE 0x41000000
+#define PROCESS_HEAP_PAGES 4096
 #define USER_CODE_SELECTOR 0x1B
 #define USER_DATA_SELECTOR 0x23
 #define USER_PAGE_FLAGS 0x06
@@ -71,6 +73,7 @@ typedef struct
     unsigned int code_base;
     unsigned int code_size;
     unsigned int entry_offset;
+    unsigned int heap_pages;
     volatile unsigned char keyboard_events[PROCESS_KEYBOARD_QUEUE_SIZE];
     volatile unsigned char keyboard_event_read;
     volatile unsigned char keyboard_event_write;

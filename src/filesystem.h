@@ -44,6 +44,8 @@ int filesystem_write_file(
     const unsigned int *buffer,
     unsigned int length);
 int filesystem_truncate_file(unsigned int owner, unsigned int handle);
+int filesystem_seek_file(
+    unsigned int owner, unsigned int handle, int offset, int whence);
 int filesystem_close_file(unsigned int owner, unsigned int handle);
 void filesystem_close_process_files(unsigned int owner);
 int filesystem_change_directory(const char *path);

@@ -44,6 +44,7 @@ def build(sources, output):
         "-fno-pic", "-fno-pie", "-fno-unwind-tables",
         "-fno-asynchronous-unwind-tables", "-mno-sse", "-mno-mmx",
         "-msoft-float", "-O2",
+        "-I", str(ROOT / "src" / "elf" / "include"),
         "-I", str(ROOT / "src" / "programs" / "include"),
     ]
     with tempfile.TemporaryDirectory(
@@ -53,6 +54,9 @@ def build(sources, output):
         input_files = [
             ROOT / "src" / "elf" / "start.s",
             ROOT / "src" / "elf" / "runtime.c",
+            ROOT / "src" / "elf" / "string.c",
+            ROOT / "src" / "elf" / "stdlib.c",
+            ROOT / "src" / "elf" / "stdio.c",
             *(Path(source).resolve() for source in sources),
         ]
         for index, input_file in enumerate(input_files):

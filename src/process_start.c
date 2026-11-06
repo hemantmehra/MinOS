@@ -62,6 +62,7 @@ enum ProcessStartResult process_start(
     process->code_base = PROCESS_BASE;
     process->code_size = 0;
     process->entry_offset = 0;
+    process->heap_pages = 0;
     process->parent_process_id = 0;
     process->wait_process_id = 0;
     process->window_handle = 0;
