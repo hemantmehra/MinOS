@@ -26,6 +26,36 @@ python run.py
 QEMU appends structured kernel logs from the debug console to
 `build\diagnostics\kernel.log`, preserved across runs.
 
+### Clang ELF programs
+
+The optional ELF toolchain uses a [prebuilt Windows LLVM distribution](https://releases.llvm.org/download.html) containing
+`clang.exe` and `ld.lld.exe`. Add its `bin` directory to `PATH`, or set
+`LLVM_BIN` to that directory for the current PowerShell session:
+
+```powershell
+$env:LLVM_BIN = 'C:\path\to\LLVM\bin'
+python build.py --elf
+python run.py
+```
+
+In MinOS, run `hello world` to execute the Clang-built example. The `--elf`
+option builds `src\elf_programs\*.c` and installs them alongside the existing
+`minc` programs. The `.EXE` extension is used for shell lookup; the contents
+are ELF. To build a program separately:
+
+```powershell
+python tools\build_elf.py src\elf_programs\hello.c -o build\programs\HELLO.EXE
+```
+
+Pass multiple `.c` files before `-o` to link them into one program. The build
+also discovers LLVM extracted under `%LOCALAPPDATA%\MinOS\llvm-*\files\LLVM\bin`.
+The ELF runtime currently provides only `main(argc, argv)`, `putchar`, and a
+small `printf` (`%d`, `%i`, `%u`, `%x`, `%c`, `%s`, and `%%`). Arguments have
+the same space-separated limits and empty `argv[0]` as the existing runtime.
+This is not a POSIX or Linux runtime; MinOS-specific wrappers, a heap, floating
+point support, and the rest of libc are not yet provided for ELF programs.
+Run `python tests\test_elf_format.py` to test ELF header validation.
+
 ## Features
 
 **Boot and CPU**
@@ -82,6 +112,10 @@ QEMU appends structured kernel logs from the debug console to
 - `MEXE` format: a 12-byte header (`MEXE`, 32-bit image size, 32-bit entry
   offset) followed by flat, relocatable 32-bit code; images up to 64 KiB are
   loaded from the ext2 image (`build.py` installs them in `A:/Programs`).
+- Statically linked i386 ELF32 executables with non-overlapping load segments
+  inside `0x40000000`–`0x4000FFFF`. Files and loaded images are each limited
+  to 64 KiB; the loader zeros BSS and rejects interpreters, TLS, and dynamic linking.
+  ELF pages are currently writable and executable.
 - All programs under `src\programs\*.c` are built by `build.py` with
   **minc** (`tools\minc.py`), a minimal C compiler that preprocesses
   `#include`, flag `#define` and `#ifndef/#ifdef/#endif`, generates NASM

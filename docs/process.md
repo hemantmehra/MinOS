@@ -31,13 +31,15 @@ The loader then:
    user-accessible pages starting at `0x40000000` for the executable (up to
    64 KiB) and a four-page stack ending at `0x40200000`. Every process uses
    the same virtual addresses in its own address space.
-3. Switches to the new address space and reads the root-directory file into
-   it. Executables are limited to
-   64 KiB and use the MinOS `MEXE` format: a 12-byte header containing the
-   four-byte `MEXE` signature, the total image size, and the entry-point
-   offset, followed by 32-bit x86 code and data. The loader checks the
-   signature, file size, and that the entry point is inside the image, and
-   frees pages beyond the image.
+3. Switches to the new address space and reads the executable file. Both the
+   file and loaded image are limited to 64 KiB. MEXE files have a 12-byte
+   header containing the signature, image size, and entry offset. For static
+   little-endian i386 ELF32 executables, the loader validates and copies
+   non-overlapping `PT_LOAD` segments into the range starting at `0x40000000`,
+   zeroes BSS, and requires the entry point to be in file-backed executable
+   bytes. It rejects dynamic linking, interpreters, and TLS. ELF segment permissions
+   are not enforced yet; all loaded image pages are writable and executable.
+   In either format, pages beyond the loaded image are freed.
 4. Builds an initial saved CPU context on the process's kernel stack. Its
    instruction pointer is the executable's load address plus its entry-point
    offset; its stack pointer is near the top of the user stack. The context

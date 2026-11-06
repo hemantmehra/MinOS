@@ -159,40 +159,65 @@ enum ProcessStartResult process_start(
         }
     }
 
-    if (file_size < 12 ||
-        ((const unsigned char *)process->code_base)[0] != 'M' ||
-        ((const unsigned char *)process->code_base)[1] != 'E' ||
-        ((const unsigned char *)process->code_base)[2] != 'X' ||
-        ((const unsigned char *)process->code_base)[3] != 'E')
+    if (file_size >= 4 &&
+        ((const unsigned char *)process->code_base)[0] == 0x7F &&
+        ((const unsigned char *)process->code_base)[1] == 'E' &&
+        ((const unsigned char *)process->code_base)[2] == 'L' &&
+        ((const unsigned char *)process->code_base)[3] == 'F')
     {
-        int released;
+        int loaded = process_load_elf(
+            file_size, &entry_offset, &expected_size);
 
-        memory_switch_address_space(previous_directory);
-        released = process_abort(process, slot);
-        restore_interrupts(flags);
-        return released
-            ? PROCESS_START_INVALID_EXECUTABLE
-            : PROCESS_START_CLEANUP_ERROR;
+        if (loaded != 1)
+        {
+            int released;
+
+            memory_switch_address_space(previous_directory);
+            released = process_abort(process, slot);
+            restore_interrupts(flags);
+            return !released ? PROCESS_START_CLEANUP_ERROR :
+                loaded < 0 ? PROCESS_START_NO_MEMORY :
+                PROCESS_START_INVALID_EXECUTABLE;
+        }
     }
+    else
+    {
+        if (file_size < 12 ||
+            ((const unsigned char *)process->code_base)[0] != 'M' ||
+            ((const unsigned char *)process->code_base)[1] != 'E' ||
+            ((const unsigned char *)process->code_base)[2] != 'X' ||
+            ((const unsigned char *)process->code_base)[3] != 'E')
+        {
+            int released;
 
-    expected_size = read_little_endian_dword(
-        (const unsigned char *)process->code_base + 4);
-    entry_offset = read_little_endian_dword(
-        (const unsigned char *)process->code_base + 8);
+            memory_switch_address_space(previous_directory);
+            released = process_abort(process, slot);
+            restore_interrupts(flags);
+            return released
+                ? PROCESS_START_INVALID_EXECUTABLE
+                : PROCESS_START_CLEANUP_ERROR;
+        }
+        expected_size = read_little_endian_dword(
+            (const unsigned char *)process->code_base + 4);
+        entry_offset = read_little_endian_dword(
+            (const unsigned char *)process->code_base + 8);
+        if (expected_size != file_size || entry_offset < 12 ||
+            entry_offset >= file_size)
+        {
+            int released;
+
+            memory_switch_address_space(previous_directory);
+            released = process_abort(process, slot);
+            restore_interrupts(flags);
+            return released
+                ? PROCESS_START_INVALID_EXECUTABLE
+                : PROCESS_START_CLEANUP_ERROR;
+        }
+    }
     memory_switch_address_space(previous_directory);
-    if (expected_size != file_size || entry_offset < 12 ||
-        entry_offset >= file_size)
-    {
-        int released = process_abort(process, slot);
-        restore_interrupts(flags);
-        return released
-            ? PROCESS_START_INVALID_EXECUTABLE
-            : PROCESS_START_CLEANUP_ERROR;
-    }
-
-    process->code_size = file_size;
+    process->code_size = expected_size;
     process->entry_offset = entry_offset;
-    expected_size = (file_size + 4095) / 4096;
+    expected_size = (process->code_size + 4095) / 4096;
     for (index = expected_size; index < EXECUTABLE_PAGE_COUNT; ++index)
     {
         unsigned int unmapped_address;

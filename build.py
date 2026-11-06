@@ -1,4 +1,5 @@
 import os
+import argparse
 import shutil
 import subprocess
 import sys
@@ -149,6 +150,8 @@ def run_msvc(developer_command):
         "process_io.c",
         "process_user.c",
         "process_start.c",
+        "process_elf.c",
+        "elf_format.c",
         "process_syscall.c",
         "process_query.c",
         "time.c",
@@ -174,6 +177,12 @@ def run_msvc(developer_command):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Build the MinOS disk image.")
+    parser.add_argument(
+        "--elf", action="store_true",
+        help="also build and install Clang/LLD ELF programs",
+    )
+    args = parser.parse_args()
     BUILD_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     nasm = find_nasm()
@@ -230,6 +239,20 @@ def main():
         if result.returncode != 0:
             raise RuntimeError(f"minc failed to compile {source.name}.")
         executables.append(executable)
+
+    if args.elf:
+        for source in sorted((ROOT / "src" / "elf_programs").glob("*.c")):
+            executable = PROGRAMS_DIRECTORY / f"{source.stem.upper()}.EXE"
+            if executable in executables:
+                raise RuntimeError(f"Duplicate program name: {executable.name}")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "build_elf.py"),
+                 str(source), "-o", str(executable)],
+                check=False,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Clang failed to build {source.name}.")
+            executables.append(executable)
 
     python = sys.executable
     disk_command = [

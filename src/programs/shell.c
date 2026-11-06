@@ -18,7 +18,7 @@ void print_start_error(int code) {
     } else if (code == 5) {
         printf("run: failed to read executable from disk.\n");
     } else if (code == 6) {
-        printf("run: invalid MEXE executable.\n");
+        printf("run: invalid MEXE or ELF executable.\n");
     } else if (code == 7) {
         printf("run: could not allocate executable memory.\n");
     } else if (code == 8) {

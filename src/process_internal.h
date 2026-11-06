@@ -117,6 +117,9 @@ extern unsigned int current_task;
 extern unsigned int next_process_id;
 extern volatile unsigned int tick_count;
 
+int process_load_elf(unsigned int file_size, unsigned int *entry_offset,
+    unsigned int *image_size);
+
 static __inline unsigned int disable_interrupts(void)
 {
     unsigned int flags;
