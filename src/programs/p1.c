@@ -7,7 +7,7 @@ int main() {
     int child = create_process("A:/Programs/P2.EXE");
     if (child > 0) {
         printf("P1: waiting for P2\n");
-        if (wait_process(child) == 1) {
+        if (wait_process(child) >= 0) {
             printf("P1: P2 completed\n");
         } else {
             printf("P1: could not wait for P2\n");

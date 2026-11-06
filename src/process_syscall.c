@@ -86,6 +86,7 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         }
     }
     else if (syscall_number == PROCESS_SERVICE_READ_ARGUMENTS ||
+        syscall_number == PROCESS_SERVICE_PROGRAM_NAME ||
         syscall_number == PROCESS_SERVICE_GET_CURRENT_DIRECTORY)
     {
         unsigned int capacity = saved_stack[9];
@@ -104,11 +105,13 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             {
                 saved_stack[11] = (unsigned int)-1;
             }
-            else if (syscall_number == PROCESS_SERVICE_READ_ARGUMENTS)
+            else if (syscall_number == PROCESS_SERVICE_READ_ARGUMENTS ||
+                syscall_number == PROCESS_SERVICE_PROGRAM_NAME)
             {
                 saved_stack[11] = (unsigned int)
                     process_copy_string_to_array(
-                        process->arguments,
+                        syscall_number == PROCESS_SERVICE_READ_ARGUMENTS
+                            ? process->arguments : process->program_path,
                         (unsigned int *)saved_stack[10],
                         capacity);
             }
@@ -231,6 +234,7 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         }
         else
         {
+            unsigned int flags = disable_interrupts();
             result = process_start(
                 filename,
                 "",
@@ -258,10 +262,12 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
                         child->process_id == child_process_id)
                     {
                         child->parent_process_id = process->process_id;
+                        process_inherit_environment(child, process);
                         saved_stack[11] = child_process_id;
                         break;
                     }
                 }
+                restore_interrupts(flags);
             }
         }
     }
@@ -270,6 +276,69 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         saved_stack[11] = (unsigned int)filesystem_seek_file(
             process->process_id, saved_stack[8],
             (int)saved_stack[10], (int)saved_stack[9]);
+    }
+    else if (syscall_number == PROCESS_SERVICE_GET_ENVIRONMENT)
+    {
+        unsigned int entry = saved_stack[8];
+        unsigned int capacity = saved_stack[9];
+
+        if (entry >= PROCESS_ENV_COUNT || capacity == 0 || capacity > 128 ||
+            !process_stack_buffer_is_valid(process, saved_stack[10],
+                capacity * sizeof(unsigned int)))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            saved_stack[11] = (unsigned int)process_copy_string_to_array(
+                process->environment[entry], (unsigned int *)saved_stack[10],
+                capacity);
+        }
+    }
+    else if (syscall_number == PROCESS_SERVICE_SET_ENVIRONMENT)
+    {
+        char variable[128];
+        unsigned int length = 0, entry, free_entry = PROCESS_ENV_COUNT;
+
+        saved_stack[11] = (unsigned int)-1;
+        if (process_copy_user_path(process, saved_stack[8], variable))
+        {
+            while (variable[length] != '\0' && variable[length] != '=')
+            {
+                char c = variable[length];
+                if (!((c >= 'A' && c <= 'Z') ||
+                      (c >= 'a' && c <= 'z') || c == '_' ||
+                      (length != 0 && c >= '0' && c <= '9')))
+                    break;
+                ++length;
+            }
+            if (length != 0 && variable[length] == '=')
+            {
+                for (entry = 0; entry < PROCESS_ENV_COUNT; ++entry)
+                {
+                    unsigned int i = 0;
+                    if (process->environment[entry][0] == '\0')
+                    {
+                        if (free_entry == PROCESS_ENV_COUNT) free_entry = entry;
+                        continue;
+                    }
+                    while (i < length &&
+                        process->environment[entry][i] == variable[i]) ++i;
+                    if (i == length && process->environment[entry][i] == '=')
+                    {
+                        free_entry = entry;
+                        break;
+                    }
+                }
+                if (free_entry != PROCESS_ENV_COUNT)
+                {
+                    for (entry = 0; variable[entry] != '\0'; ++entry)
+                        process->environment[free_entry][entry] = variable[entry];
+                    process->environment[free_entry][entry] = '\0';
+                    saved_stack[11] = 0;
+                }
+            }
+        }
     }
     else if (syscall_number == PROCESS_SERVICE_INPUT_EOF)
     {
@@ -354,7 +423,7 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         unsigned int child_process_id = saved_stack[8];
         unsigned int child_slot;
 
-        saved_stack[11] = 0;
+        saved_stack[11] = (unsigned int)-1;
         for (child_slot = 1; child_slot < TASK_LIMIT; ++child_slot)
         {
             Process *child = &processes[child_slot];
@@ -369,7 +438,7 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             {
                 child->parent_process_id = 0;
                 child->state = TASK_UNUSED;
-                saved_stack[11] = 1;
+                saved_stack[11] = child->exit_status;
             }
             else if (child->state == TASK_ACTIVE ||
                 child->state == TASK_SLEEPING ||
@@ -580,6 +649,7 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     }
     else if (syscall_number == PROCESS_SYSCALL_EXIT)
     {
+        process->exit_status = saved_stack[8] & 255;
         process_terminate_current();
     }
     else

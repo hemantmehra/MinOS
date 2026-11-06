@@ -12,6 +12,8 @@ int atoi(const char *s);
 long strtol(const char *restrict s, char **restrict end, int base);
 unsigned long strtoul(const char *restrict s, char **restrict end, int base);
 int abs(int x);
+char *getenv(const char *name);
+extern char **environ;
 void exit(int status) __attribute__((noreturn));
 void abort(void) __attribute__((noreturn));
 #endif

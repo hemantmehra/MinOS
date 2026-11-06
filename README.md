@@ -62,11 +62,24 @@ existing file and `a` appends to one. The underlying filesystem cannot yet
 create regular files; writing is supported only on `B:`, and seeks beyond
 end-of-file are rejected. File-open failures report `EIO` because the kernel
 does not yet distinguish missing files from other open errors. Console input
-has no EOF key; pipe input detects a closed producer. Exit status is not yet
-propagated to the parent. Arguments retain the existing space-separated limits
-and empty `argv[0]`. File growth is limited to 12 KiB, and simultaneous open
+has no EOF key; pipe input detects a closed producer. File growth is limited
+to 12 KiB, and simultaneous open
 streams of the same file do not provide coherent concurrent writes or atomic
 append. This is not a complete ISO C or POSIX library.
+
+Each process has a 1 MiB stack and a growable heap. Both ELF and minc C
+programs receive `argc`, a null-terminated `argv` with the executable path in
+`argv[0]` (the path passed to the loader), and a null-terminated `envp` as a
+third `main` argument. ELF
+programs can also use `getenv` and `environ`. The shell supports `set
+NAME=value` and `set` to list variables; `PATH` controls program lookup.
+Children inherit a copy of the parent's environment (up to 16 entries, each
+at most 127 characters). ELF `environ` is a startup snapshot, not a mutable
+kernel environment; there is no `setenv` or `unsetenv` yet. Arguments are
+space-separated with no quoting or escaping and the command line is limited
+to 127 characters. `wait_process` returns an 8-bit child exit status, or `-1`
+on failure; background processes are not waitable.
+These are runtime-provided arguments, not a Linux-compatible initial stack ABI.
 
 Run `python tests\test_elf_format.py` to test ELF header validation. The
 `tests\libc_test.c` and `tests\libc_pipe.c` ELF programs exercise the C library;
@@ -127,11 +140,11 @@ run the former only against a disposable data disk because it overwrites
 
 **Executables and toolchain**
 - `MEXE` format: a 12-byte header (`MEXE`, 32-bit image size, 32-bit entry
-  offset) followed by flat, relocatable 32-bit code; images up to 64 KiB are
+  offset) followed by flat, relocatable 32-bit code; images up to 4 MiB are
   loaded from the ext2 image (`build.py` installs them in `A:/Programs`).
 - Statically linked i386 ELF32 executables with non-overlapping load segments
-  inside `0x40000000`–`0x4000FFFF`. Files and loaded images are each limited
-  to 64 KiB; the loader zeros BSS and rejects interpreters, TLS, and dynamic linking.
+  inside `0x40000000`–`0x403FFFFF`. Files and loaded images are each limited
+  to 4 MiB; the loader zeros BSS and rejects interpreters, TLS, and dynamic linking.
   ELF pages are currently writable and executable.
 - All programs under `src\programs\*.c` are built by `build.py` with
   **minc** (`tools\minc.py`), a minimal C compiler that preprocesses

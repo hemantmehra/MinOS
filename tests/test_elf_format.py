@@ -102,7 +102,7 @@ class ElfFormatTests(unittest.TestCase):
         mutate(52, "<I", 7)            # unsupported TLS
         mutate(56, "<I", 255)          # file segment past EOF
         mutate(60, "<I", BASE - 1)     # below image
-        mutate(60, "<I", BASE + 65535) # segment past image
+        mutate(60, "<I", BASE + 4 * 1024 * 1024 - 1) # segment past image
         mutate(68, "<I", 145)          # filesz exceeds memsz
         mutate(76, "<I", 4)            # no executable entry
         mutate(80, "<I", 3)            # non-power-of-two alignment
@@ -116,6 +116,13 @@ class ElfFormatTests(unittest.TestCase):
         struct.pack_into("<H", data, 44, 2)
         struct.pack_into("<IIIIIIII", data, 84, 1, 120, BASE + 120,
                          BASE + 120, 16, 16, 6, 1)
+        self.assertEqual(self.validate_image(data)[0], 0)
+
+    def test_image_limit(self):
+        data = image()
+        struct.pack_into("<I", data, 72, 4 * 1024 * 1024)
+        self.assertEqual(self.validate_image(data), (1, 96, 4 * 1024 * 1024))
+        struct.pack_into("<I", data, 72, 4 * 1024 * 1024 + 1)
         self.assertEqual(self.validate_image(data)[0], 0)
 
 

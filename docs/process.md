@@ -29,10 +29,10 @@ The loader then:
    kernel stack.
 2. Creates a new page directory that shares the kernel mappings, then maps
    user-accessible pages starting at `0x40000000` for the executable (up to
-   64 KiB) and a four-page stack ending at `0x40200000`. Every process uses
+   4 MiB) and a 1 MiB stack ending at `0x40800000`. Every process uses
    the same virtual addresses in its own address space.
 3. Switches to the new address space and reads the executable file. Both the
-   file and loaded image are limited to 64 KiB. MEXE files have a 12-byte
+   file and loaded image are limited to 4 MiB. MEXE files have a 12-byte
    header containing the signature, image size, and entry offset. For static
    little-endian i386 ELF32 executables, the loader validates and copies
    non-overlapping `PT_LOAD` segments into the range starting at `0x40000000`,
@@ -45,6 +45,17 @@ The loader then:
    offset; its stack pointer is near the top of the user stack. The context
    has ring 3 code/data selectors and interrupts enabled.
 5. Assigns a process ID and marks the task active.
+
+The per-process heap begins at `0x41000000` and grows in zeroed 4 KiB
+pages up to 16 MiB. ELF staging starts at `0x43000000`, away from the heap,
+image and stack. Stack and image pages are zeroed on allocation. Startup exposes
+the path passed to the loader as `argv[0]`, space-separated arguments in `argv[1..]`, and a
+null-terminated inherited `envp`. The shell's `set NAME=value` changes its
+own environment; child processes inherit a copy. Entries are limited to 16
+strings of at most 127 characters. ELF `getenv` and `environ` refer to the
+startup snapshot. Argument quoting and environment mutation through the ELF
+library are not implemented. The runtime constructs these vectors; the raw
+entry stack is not a Linux process startup ABI.
 
 When a process ends, the kernel frees all of its pages and its page directory.
 The shell prints the process name and ID and continues running. The PIT
@@ -78,7 +89,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 
 | `EAX` | Operation | Arguments / result |
 |---|---|---|
-| `0` | Exit the process | No arguments |
+| `0` | Exit the process | `EBX` contains the status; its low 8 bits are returned to a waiting parent |
 | `1` | Print a string | `EBX` points to a null-terminated string inside the executable image |
 | `2` | Read a keyboard event | Returns a make or break scancode in `EAX`, or `0` if no event is queued |
 | `3` | Reserved | — |
@@ -100,13 +111,16 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `28` | Draw one framebuffer pixel | `EBX` = x, `EDX` = y, `ECX` = palette color |
 | `29` | Present the back buffer | No arguments |
 | `30` | Create a child process | `EBX` points to a null-terminated executable name in the caller's image; returns the child PID or `-1` |
-| `31` | Wait for a child process | Child PID in `EBX`; blocks until it exits and returns `1`, or returns `0` if it is not a child |
+| `31` | Wait for a child process | Child PID in `EBX`; blocks until it exits and returns its status (0–255), or `-1` on failure. Abnormal termination returns 255 |
 | `32` | Create a graphics window | `EBX` points to a non-empty null-terminated title in the caller's image, `ECX` is width (1-640), `EDX` is height (1-480); returns a handle or `0` |
 | `33` | Start a program | `EBX` points to a local array with the null-terminated program name, `ECX` to an array with its arguments (each at least 128 elements, one character per element), `EDX` is flags (`1` background, `2` stdout feeds a pipe, `4` stdin reads the pipe started by the preceding `2` call); returns the child PID (a child of the caller unless background) or the negated start error (`-1` invalid name, `-2` arguments too long, `-3` not found, `-4` too large, `-5` disk error, `-6` invalid executable, `-7` no memory, `-8` process limit, `-9` cleanup error) |
 | `35` | Sleep | `EBX` is the number of milliseconds (capped at 60000); the process is blocked until the 1000 Hz timer reaches the wake-up time and returns `0` |
 | `36` | Grow heap | Maps one zeroed 4 KiB user page, up to 16 MiB per process; returns its address or `0` on failure |
 | `37` | Check pipe EOF | Returns `1` when the caller's input pipe has been drained and its producer has closed, or `0` otherwise |
 | `38` | Seek file | `EBX` is a file handle, `ECX` a signed offset, and `EDX` is `0` (start), `1` (current), or `2` (end); returns the new position or `-1`. Positions beyond EOF are rejected |
+| `39` | Read program name | Writable integer array in `ECX`, capacity in `EDX`; returns the path length or `-1` |
+| `40` | Read environment entry | `EBX` is an index from 0 to 15, `ECX` is a writable integer array and `EDX` its capacity (at most 128); returns the entry length, zero for an empty slot, or `-1` |
+| `41` | Set environment entry | `EBX` points to a `NAME=value` string in the image or a 128-element integer array on the stack; returns `0` or `-1`. Names start with a letter or underscore and contain only letters, digits and underscores |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;

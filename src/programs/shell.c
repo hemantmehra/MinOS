@@ -14,7 +14,7 @@ void print_start_error(int code) {
     } else if (code == 3) {
         printf("run: executable not found.\n");
     } else if (code == 4) {
-        printf("run: executable exceeds the 64 KiB limit.\n");
+        printf("run: executable exceeds the 4 MiB limit.\n");
     } else if (code == 5) {
         printf("run: failed to read executable from disk.\n");
     } else if (code == 6) {
@@ -118,13 +118,23 @@ int main() {
     int args[128];
     int path[128];
 
-    char *default_path = "A:/Programs";
-    int path_length = 0;
-    while (default_path[path_length] != 0) {
-        path[path_length] = default_path[path_length];
-        path_length++;
+    int entry[128];
+    path[0] = 0;
+    for (int env = 0; env < 16; env++) {
+        if (get_environment(env, entry) < 0) {
+            printf("shell: could not read environment.\n");
+            return 1;
+        }
+        if (entry[0] == 'P' && entry[1] == 'A' && entry[2] == 'T' &&
+            entry[3] == 'H' && entry[4] == '=') {
+            int pos = 0;
+            while (entry[pos + 5] != 0) {
+                path[pos] = entry[pos + 5];
+                pos++;
+            }
+            path[pos] = 0;
+        }
     }
-    path[path_length] = 0;
 
     while (1) {
         char *line = read_line("minios> ", 127);
@@ -221,21 +231,30 @@ int main() {
 
             if (stages == 1 && name_is(name, "set")) {
                 if (args[0] == 0) {
-                    printf("PATH=");
-                    for (int pos = 0; path[pos] != 0; pos++) {
-                        putchar(path[pos]);
+                    for (int env = 0; env < 16; env++) {
+                        if (get_environment(env, entry) < 0) {
+                            printf("shell: could not read environment.\n");
+                            break;
+                        }
+                        if (entry[0] != 0) {
+                            for (int pos = 0; entry[pos] != 0; pos++) {
+                                putchar(entry[pos]);
+                            }
+                            putchar('\n');
+                        }
                     }
-                    printf("\n");
-                } else if (args[0] == 'P' && args[1] == 'A' && args[2] == 'T' &&
-                           args[3] == 'H' && args[4] == '=') {
-                    int pos = 0;
-                    while (args[5 + pos] != 0) {
-                        path[pos] = args[5 + pos];
-                        pos++;
-                    }
-                    path[pos] = 0;
+                } else if (set_environment(args) < 0) {
+                    printf("set: invalid variable or environment full.\n");
                 } else {
-                    printf("Usage: set [PATH=dir;dir...]\n");
+                    if (args[0] == 'P' && args[1] == 'A' && args[2] == 'T' &&
+                        args[3] == 'H' && args[4] == '=') {
+                        int pos = 0;
+                        while (args[5 + pos] != 0) {
+                            path[pos] = args[5 + pos];
+                            pos++;
+                        }
+                        path[pos] = 0;
+                    }
                 }
                 break;
             }
@@ -262,10 +281,14 @@ int main() {
 
         if (!background) {
             if (pid0 > 0) {
-                wait_process(pid0);
+                if (wait_process(pid0) < 0) {
+                    printf("shell: could not wait for process.\n");
+                }
             }
             if (pid1 > 0) {
-                wait_process(pid1);
+                if (wait_process(pid1) < 0) {
+                    printf("shell: could not wait for process.\n");
+                }
             }
         }
     }

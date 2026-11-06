@@ -14,6 +14,6 @@ SECTIONS
     .rodata : { *(.rodata .rodata.*) } :image
     .data : { *(.data .data.*) } :image
     .bss : { *(.bss .bss.*) *(COMMON) } :image
-    ASSERT(. <= 0x40010000, "ELF image exceeds the 64 KiB MinOS limit")
+    ASSERT(. <= 0x40400000, "ELF image exceeds the 4 MiB MinOS limit")
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

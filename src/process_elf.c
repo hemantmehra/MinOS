@@ -2,7 +2,7 @@
 #include "process_internal.h"
 #include "elf_format.h"
 
-#define ELF_SCRATCH_BASE (PROCESS_BASE + 0x00100000)
+#define ELF_SCRATCH_BASE 0x43000000
 
 #if ELF_IMAGE_BASE != PROCESS_BASE || ELF_IMAGE_LIMIT != EXECUTABLE_MAX_SIZE
 #error ELF and process image limits must match

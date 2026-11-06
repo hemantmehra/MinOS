@@ -7,13 +7,15 @@
 #define PROCESS_TABLE_BASE 0xC0000000
 #define PROCESS_TABLE_SIZE 0x01000000
 #define PROCESS_KERNEL_STACK_SIZE 14336
-#define EXECUTABLE_MAX_SIZE (64 * 1024)
+#define EXECUTABLE_MAX_SIZE (4 * 1024 * 1024)
 #define EXECUTABLE_PAGE_COUNT (EXECUTABLE_MAX_SIZE / 4096)
-#define PROCESS_STACK_PAGE_COUNT 4
-#define PROCESS_SLOT_SIZE 0x00200000
+#define PROCESS_STACK_PAGE_COUNT 256
+#define PROCESS_SLOT_SIZE 0x00800000
 #define PROCESS_BASE 0x40000000
 #define PROCESS_HEAP_BASE 0x41000000
 #define PROCESS_HEAP_PAGES 4096
+#define PROCESS_ENV_COUNT 16
+#define PROCESS_ENV_LENGTH 128
 #define USER_CODE_SELECTOR 0x1B
 #define USER_DATA_SELECTOR 0x23
 #define USER_PAGE_FLAGS 0x06
@@ -66,6 +68,7 @@ typedef struct
     unsigned int process_id;
     unsigned int parent_process_id;
     unsigned int wait_process_id;
+    unsigned int exit_status;
     unsigned int wake_tick;
     unsigned int window_handle;
     unsigned int *saved_stack;
@@ -84,6 +87,8 @@ typedef struct
     unsigned char keyboard_caps_lock;
     unsigned char keyboard_extended;
     char arguments[COMMAND_BUFFER_SIZE];
+    char program_path[128];
+    char environment[PROCESS_ENV_COUNT][PROCESS_ENV_LENGTH];
     char name[13];
     unsigned int standard_input_handle;
     unsigned int standard_output_handle;
@@ -122,6 +127,7 @@ extern volatile unsigned int tick_count;
 
 int process_load_elf(unsigned int file_size, unsigned int *entry_offset,
     unsigned int *image_size);
+void process_inherit_environment(Process *child, const Process *parent);
 
 static __inline unsigned int disable_interrupts(void)
 {

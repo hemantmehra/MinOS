@@ -2,8 +2,9 @@
 #define MINOS_H
 
 /* Programs may declare `int main(int argc, char *argv[])`. The runtime splits
-   the command line on spaces: argv[0] is an empty string, argv[1..] are the
-   arguments (at most 15). Plain `int main()` is also accepted. */
+   the command line on spaces: argv[0] is the path passed to the loader and
+   argv[1..] are the arguments. A third `char *envp[]` argument receives the
+   inherited environment. Plain `int main()` is also accepted. */
 
 /* Prints prompt, then reads a line of at most max (<= 127) characters from
    the keyboard. Returns a pointer to a static buffer. */
@@ -54,8 +55,13 @@ int write_stream(int handle, int *buffer, int length);
 /* Processes. */
 int create_process(const char *name);
 int start_process(const void *name, const void *arguments, int flags);
+/* Returns the child's 8-bit exit status, or -1 on failure. */
 int wait_process(int process_id);
 int kill_process(void);
+/* Environment entries are indexed 0..15; empty slots return an empty string.
+   set_environment takes a local int[128] containing NAME=VALUE. */
+int get_environment(int index, int *entry);
+int set_environment(const void *entry);
 
 /* Graphics. A window is required before drawing. */
 int create_window(const char *title, int width, int height);

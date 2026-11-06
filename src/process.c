@@ -172,7 +172,7 @@ void process_cleanup_terminated(void)
                             waiter->process_id == parent_id &&
                             waiter->wait_process_id == child_id)
                         {
-                            waiter->saved_stack[11] = 1;
+                            waiter->saved_stack[11] = processes[slot].exit_status;
                             waiter->wait_process_id = 0;
                             waiter->state = TASK_ACTIVE;
                             processes[slot].parent_process_id = 0;
@@ -212,7 +212,7 @@ void process_cleanup_terminated(void)
                         waiter->process_id == parent_id &&
                         waiter->wait_process_id == child_id)
                     {
-                        waiter->saved_stack[11] = 0;
+                        waiter->saved_stack[11] = (unsigned int)-1;
                         waiter->wait_process_id = 0;
                         waiter->state = TASK_ACTIVE;
                         break;

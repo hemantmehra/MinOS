@@ -21,21 +21,34 @@ __get_image_base:
     fldcw [edi + __rt_cw - image_start]
     ; Build argc/argv from the command line. The kernel copies the arguments
     ; into a stack buffer of 128 ints; the tokens are copied as NUL-terminated
-    ; strings into the image. argv[0] is an empty string.
+    ; strings into the image. Retrieve the executable path for argv[0].
     sub esp, 512
+    mov ecx, esp
+    mov edx, 128
+    mov eax, 39
+    int 0x80
+    test eax, eax
+    js .startup_error
+    lea ebx, [edi + __rt_argbuf - image_start]
+    lea edx, [edi + __rt_argv - image_start]
+    mov [edx], ebx
+    mov esi, esp
+.name_copy:
+    mov eax, [esi]
+    add esi, 4
+    mov [ebx], al
+    inc ebx
+    test eax, eax
+    jnz .name_copy
     mov ecx, esp
     mov edx, 128
     mov eax, 15
     int 0x80
-    lea ebx, [edi + __rt_argbuf - image_start]
-    mov byte [ebx], 0
+    test eax, eax
+    js .startup_error
     lea edx, [edi + __rt_argv - image_start]
-    mov [edx], ebx
-    inc ebx
     mov ecx, 1
     mov esi, esp
-    test eax, eax
-    js .args_done
 .arg_skip:
     mov eax, [esi]
     cmp eax, ' '
@@ -45,7 +58,7 @@ __get_image_base:
 .arg_check:
     test eax, eax
     jz .args_done
-    cmp ecx, 16
+    cmp ecx, 65
     jae .args_done
     mov [edx + ecx * 4], ebx
     inc ecx
@@ -64,9 +77,51 @@ __get_image_base:
     inc ebx
     jmp .arg_skip
 .args_done:
+    push ecx
+    push edx
+    xor ebp, ebp
+    mov dword [edi + __rt_envcount - image_start], 0
+.env_next:
+    cmp ebp, 16
+    jae .env_done
+    mov ebx, ebp
+    lea ecx, [esp + 8]
+    mov edx, 128
+    mov eax, 40
+    int 0x80
+    test eax, eax
+    js .startup_error
+    jz .env_skip
+    mov ecx, [edi + __rt_envcount - image_start]
+    mov ebx, ecx
+    shl ebx, 7
+    lea ebx, [edi + ebx + __rt_envbuf - image_start]
+    mov [edi + ecx * 4 + __rt_envp - image_start], ebx
+    inc dword [edi + __rt_envcount - image_start]
+    lea esi, [esp + 8]
+.env_copy:
+    mov eax, [esi]
+    add esi, 4
+    mov [ebx], al
+    inc ebx
+    test eax, eax
+    jnz .env_copy
+.env_skip:
+    inc ebp
+    jmp .env_next
+.env_done:
+    pop edx
+    pop ecx
+    lea eax, [edi + __rt_envp - image_start]
+    push eax
     push edx
     push ecx
     call _main
+    mov ebx, eax
+    mov eax, 0
+    int 0x80
+.startup_error:
+    mov ebx, 255
     mov eax, 0
     int 0x80
 __halt:
@@ -353,8 +408,11 @@ __rt_putnum:
     ret
 
 __rt_cw: dw 0
-__rt_argv: times 17 dd 0
+__rt_argv: times 66 dd 0
 __rt_argbuf: times 256 db 0
+__rt_envp: times 17 dd 0
+__rt_envbuf: times 16 * 128 db 0
+__rt_envcount: dd 0
 __rt_half: dd 0x3F000000
 __rt_char: db 0, 0
 __rt_digits: times 11 db 0

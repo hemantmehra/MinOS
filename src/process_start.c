@@ -3,6 +3,19 @@
 #include "kernel_log.h"
 #include "process_internal.h"
 
+void process_inherit_environment(Process *child, const Process *parent)
+{
+    unsigned int entry, character;
+    for (entry = 0; entry < PROCESS_ENV_COUNT; ++entry)
+    {
+        for (character = 0; character < PROCESS_ENV_LENGTH; ++character)
+        {
+            child->environment[entry][character] =
+                parent->environment[entry][character];
+        }
+    }
+}
+
 enum ProcessStartResult process_start(
     const char *filename,
     const char *arguments,
@@ -27,6 +40,20 @@ enum ProcessStartResult process_start(
     if (arguments == 0)
     {
         arguments = "";
+    }
+    if (filename == 0)
+    {
+        restore_interrupts(flags);
+        return PROCESS_START_INVALID_NAME;
+    }
+    for (index = 0; index < sizeof(processes[0].program_path) - 1 &&
+        filename[index] != '\0'; ++index)
+    {
+    }
+    if (filename[index] != '\0')
+    {
+        restore_interrupts(flags);
+        return PROCESS_START_INVALID_NAME;
     }
     while (arguments[argument_length] != '\0')
     {
@@ -65,6 +92,7 @@ enum ProcessStartResult process_start(
     process->heap_pages = 0;
     process->parent_process_id = 0;
     process->wait_process_id = 0;
+    process->exit_status = 255;
     process->window_handle = 0;
     process->page_directory = 0;
     process->keyboard_event_read = 0;
@@ -83,6 +111,22 @@ enum ProcessStartResult process_start(
     for (index = 0; index <= argument_length; ++index)
     {
         process->arguments[index] = arguments[index];
+    }
+    for (index = 0; filename[index] != '\0'; ++index)
+    {
+        process->program_path[index] = filename[index];
+    }
+    process->program_path[index] = '\0';
+    for (index = 0; index < PROCESS_ENV_COUNT; ++index)
+    {
+        process->environment[index][0] = '\0';
+    }
+    {
+        static const char default_path[] = "PATH=A:/Programs";
+        for (index = 0; index < sizeof(default_path); ++index)
+        {
+            process->environment[0][index] = default_path[index];
+        }
     }
 
     process->page_directory = memory_create_address_space();
@@ -124,6 +168,16 @@ enum ProcessStartResult process_start(
             return released
                 ? PROCESS_START_NO_MEMORY
                 : PROCESS_START_CLEANUP_ERROR;
+        }
+        {
+            volatile unsigned int *page =
+                (volatile unsigned int *)physical_address;
+            unsigned int word;
+
+            for (word = 0; word < 4096 / sizeof(unsigned int); ++word)
+            {
+                page[word] = 0;
+            }
         }
     }
 
@@ -351,6 +405,7 @@ int process_spawn(
     {
         child->parent_process_id = parent->process_id;
     }
+    process_inherit_environment(child, parent);
     if (spawn_flags & SPAWN_PIPE_OUTPUT)
     {
         process_pipe.producer_id = child_process_id;

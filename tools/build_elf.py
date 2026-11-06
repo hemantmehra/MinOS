@@ -76,8 +76,8 @@ def build(sources, output):
              "-o", str(temporary_output), *objects],
             check=True,
         )
-        if temporary_output.stat().st_size > 64 * 1024:
-            raise RuntimeError("ELF file exceeds the 64 KiB MinOS loader limit.")
+        if temporary_output.stat().st_size > 4 * 1024 * 1024:
+            raise RuntimeError("ELF file exceeds the 4 MiB MinOS loader limit.")
         temporary_output.replace(output)
 
 

@@ -165,11 +165,21 @@ unsigned long strtoul(const char *restrict s, char **restrict end, int base)
 }
 int atoi(const char *s) { return (int)strtol(s, 0, 10); }
 int abs(int x) { return x < 0 ? -x : x; }
+extern char **environ;
+char *getenv(const char *name)
+{
+    size_t length = strlen(name);
+    char **entry;
+    if (!length || strchr(name, '=')) return 0;
+    for (entry = environ; *entry; ++entry)
+        if (strncmp(*entry, name, length) == 0 && (*entry)[length] == '=')
+            return *entry + length + 1;
+    return 0;
+}
 void exit(int status)
 {
-    (void)status;
     fflush(0);
-    __asm__ volatile ("int $0x80" : : "a"(0) : "memory", "cc");
+    __asm__ volatile ("int $0x80" : : "a"(0), "b"(status) : "memory", "cc");
     for (;;) {}
 }
 void abort(void)
