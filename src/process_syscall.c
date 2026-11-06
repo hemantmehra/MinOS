@@ -277,6 +277,29 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             process->process_id, saved_stack[8],
             (int)saved_stack[10], (int)saved_stack[9]);
     }
+    else if (syscall_number == PROCESS_SERVICE_OPEN_OR_CREATE ||
+        syscall_number == PROCESS_SERVICE_MKDIR_PATH ||
+        syscall_number == PROCESS_SERVICE_CHDIR_PATH)
+    {
+        char path[128];
+        unsigned int flags;
+        if (!process_copy_user_path(process, saved_stack[8], path))
+        {
+            saved_stack[11] = (unsigned int)-1;
+        }
+        else
+        {
+            flags = disable_interrupts();
+            if (syscall_number == PROCESS_SERVICE_OPEN_OR_CREATE)
+                saved_stack[11] = (unsigned int)filesystem_open_or_create_file(
+                    process->process_id, path);
+            else if (syscall_number == PROCESS_SERVICE_MKDIR_PATH)
+                saved_stack[11] = (unsigned int)filesystem_create_directory(path);
+            else
+                saved_stack[11] = filesystem_change_directory(path) ? 0 : (unsigned int)-1;
+            restore_interrupts(flags);
+        }
+    }
     else if (syscall_number == PROCESS_SERVICE_GET_ENVIRONMENT)
     {
         unsigned int entry = saved_stack[8];

@@ -10,5 +10,7 @@ extern int errno;
 #define ENOENT 6
 #define EMFILE 7
 #define EBADF 8
+#define EEXIST 9
+#define ENOSPC 10
 
 #endif

@@ -118,6 +118,8 @@ char *strerror(int errnum)
     case ENOENT: return "File not found";
     case EMFILE: return "Too many open files";
     case EBADF: return "Invalid stream";
+    case EEXIST: return "File exists";
+    case ENOSPC: return "No space left";
     default: return "Unknown error";
     }
 }

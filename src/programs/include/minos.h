@@ -47,6 +47,10 @@ int write_file(int handle, int *buffer, int length);
 int truncate_file(int handle);
 int get_current_directory(int *path);         /* path: 128 elements */
 int change_directory(void);
+int open_or_create_file(const void *path);
+int mkdir_path(const void *path);
+int chdir_path(const void *path);
+int seek_file(int handle, int offset, int origin);
 
 /* Standard streams: 0 = input, 1 = output. */
 int read_stream(int handle, int *buffer);     /* buffer: 256 elements */

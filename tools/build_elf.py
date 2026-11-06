@@ -57,6 +57,7 @@ def build(sources, output):
             ROOT / "src" / "elf" / "string.c",
             ROOT / "src" / "elf" / "stdlib.c",
             ROOT / "src" / "elf" / "stdio.c",
+            ROOT / "src" / "elf" / "directory.c",
             *(Path(source).resolve() for source in sources),
         ]
         for index, input_file in enumerate(input_files):

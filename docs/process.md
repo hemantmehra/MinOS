@@ -117,10 +117,13 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `35` | Sleep | `EBX` is the number of milliseconds (capped at 60000); the process is blocked until the 1000 Hz timer reaches the wake-up time and returns `0` |
 | `36` | Grow heap | Maps one zeroed 4 KiB user page, up to 16 MiB per process; returns its address or `0` on failure |
 | `37` | Check pipe EOF | Returns `1` when the caller's input pipe has been drained and its producer has closed, or `0` otherwise |
-| `38` | Seek file | `EBX` is a file handle, `ECX` a signed offset, and `EDX` is `0` (start), `1` (current), or `2` (end); returns the new position or `-1`. Positions beyond EOF are rejected |
+| `38` | Seek file | `EBX` is a file handle, `ECX` a signed offset, and `EDX` is `0` (start), `1` (current), or `2` (end); returns the new position or `-1`. Seeking past EOF is allowed |
 | `39` | Read program name | Writable integer array in `ECX`, capacity in `EDX`; returns the path length or `-1` |
 | `40` | Read environment entry | `EBX` is an index from 0 to 15, `ECX` is a writable integer array and `EDX` its capacity (at most 128); returns the entry length, zero for an empty slot, or `-1` |
 | `41` | Set environment entry | `EBX` points to a `NAME=value` string in the image or a 128-element integer array on the stack; returns `0` or `-1`. Names start with a letter or underscore and contain only letters, digits and underscores |
+| `42` | Open or create regular file | `EBX` points to a path; opens an existing file or creates it on `B:` and returns a handle, or `-1` |
+| `43` | Create directory by path | `EBX` points to a path; returns a `CreateDirectoryResult` (`0` on success), or `-1` for an invalid buffer. Creation is restricted to `B:` |
+| `44` | Change directory by path | `EBX` points to a path; returns `0` on success or `-1` |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;
@@ -194,9 +197,13 @@ redirected into a pipeline.
 
 An ext2 data disk is attached as the secondary IDE drive. `A:/` resolves to
 the system disk and `B:/` resolves to the secondary data disk.
-Writes and truncation are restricted to this secondary disk. Files must already
-exist and have allocated data blocks; writes cannot grow beyond allocated
-capacity.
+File and directory creation, writes, and truncation are restricted to this
+secondary disk. File writes can allocate up to 12 direct 1 KiB blocks. A write
+after a seek past EOF fills the gap with zeroes, up to that limit; a failed
+write may leave a partially zero-filled extension. Directory creation accepts names of one to eight
+letters, digits, underscores or hyphens. The ext2 metadata updates are not
+journaled or transactional, so an I/O failure or interruption can leave an
+inconsistent volume. Simultaneous streams of one file are not coherent.
 
 The shell accepts a single pipeline (`program [args] | program [args]`). The
 producer's standard output becomes the consumer's standard input;

@@ -57,15 +57,23 @@ and `%%`; width, precision and floating-point formats are not supported.
 The growable per-process heap is limited to 16 MiB and pages are released
 when the process exits.
 
-File streams currently **open existing files only**: `w` truncates an
-existing file and `a` appends to one. The underlying filesystem cannot yet
-create regular files; writing is supported only on `B:`, and seeks beyond
-end-of-file are rejected. File-open failures report `EIO` because the kernel
+`fopen` with `w` or `a` creates a missing regular file on `B:`; `w`
+truncates an existing file and `a` appends to one. Writing and creation are
+supported only on `B:`. Seeking beyond EOF is allowed; a subsequent write
+zero-fills the gap within the 12 KiB write limit.
+File-open failures report `EIO` because the kernel
 does not yet distinguish missing files from other open errors. Console input
 has no EOF key; pipe input detects a closed producer. File growth is limited
 to 12 KiB, and simultaneous open
 streams of the same file do not provide coherent concurrent writes or atomic
 append. This is not a complete ISO C or POSIX library.
+
+ELF programs can use `opendir`, `readdir`, `closedir`, `mkdir`, `chdir`,
+and `getcwd`. `struct dirent` currently exposes only `d_name`; `mkdir`
+ignores its mode and uses fixed permissions. Directory names are limited to
+one to eight letters, digits, underscores or hyphens. The current directory
+is shared globally, rather than per process. The filesystem is not journaled;
+I/O errors or interruption during metadata updates can require repair.
 
 Each process has a 1 MiB stack and a growable heap. Both ELF and minc C
 programs receive `argc`, a null-terminated `argv` with the executable path in
@@ -85,6 +93,9 @@ Run `python tests\test_elf_format.py` to test ELF header validation. The
 `tests\libc_test.c` and `tests\libc_pipe.c` ELF programs exercise the C library;
 run the former only against a disposable data disk because it overwrites
 `B:\WRITE.TXT`.
+`tests\filesystem_services.c` creates files and directories and must likewise
+be run only on a disposable disk; running it with an argument verifies persistence
+after reboot.
 
 ## Features
 
@@ -128,8 +139,8 @@ run the former only against a disposable data disk because it overwrites
   to avoid flicker.
 
 **Storage**
-- ext2 filesystem (1 KiB blocks) with directory listing, file reads and
-  writes that can grow a file up to 12 direct blocks, and directory creation.
+- ext2 filesystem (1 KiB blocks) with directory listing, file and directory
+  creation on `B:`, and file writes up to 12 direct blocks.
 - `minedit <file>`: command-line text editor (Ctrl+W writes, Ctrl+X exits,
   status line at the bottom). It edits existing `B:` files up to 1000
   characters.

@@ -126,6 +126,7 @@ int ext2_get_inode_block(
     unsigned int *physical_block);
 int ext2_write_inode(
     const Ext2FileSystem *filesystem, const Ext2Inode *inode);
+int ext2_clear_inode(const Ext2FileSystem *filesystem, unsigned int inode);
 int ext2_mark_allocated(
     const Ext2FileSystem *filesystem,
     unsigned int group,

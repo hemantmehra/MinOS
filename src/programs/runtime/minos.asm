@@ -80,6 +80,10 @@ SYS0 terminal_home, 34
 SYS1 sleep, 35
 SYSBUF get_environment, 40, 128
 SYS1 set_environment, 41
+SYS1 open_or_create_file, 42
+SYS1 mkdir_path, 43
+SYS1 chdir_path, 44
+SYS3 seek_file, 38
 SYS0 read_key, 2
 
 ; void draw_pixel(int x, int y, int color): EBX = x, EDX = y, ECX = color

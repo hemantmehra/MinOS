@@ -171,7 +171,8 @@ static int ext2_add_directory_entry(
     const Ext2DirectorySlot *slot,
     unsigned int child_inode,
     const char *name,
-    unsigned int name_length)
+    unsigned int name_length,
+    unsigned char file_type)
 {
     unsigned char block[EXT2_BLOCK_SIZE];
     unsigned int physical_block;
@@ -206,7 +207,7 @@ static int ext2_add_directory_entry(
 
     ext2_write_directory_record(
         block, entry_offset, child_inode, entry_length,
-        name, name_length, 2);
+        name, name_length, file_type);
     return ext2_write_block(filesystem, physical_block, block);
 }
 
@@ -251,8 +252,8 @@ static void ext2_initialize_directory_inode(
     pointers[3] = (unsigned char)(block_number >> 24);
 }
 
-static enum CreateDirectoryResult filesystem_create_directory_locked(
-    const char *path)
+static enum CreateDirectoryResult filesystem_create_entry_locked(
+    const char *path, int is_directory)
 {
     Ext2FileSystem filesystem;
     Ext2Inode parent_inode;
@@ -291,6 +292,10 @@ static enum CreateDirectoryResult filesystem_create_directory_locked(
     {
         return CREATE_DIRECTORY_INVALID_NAME;
     }
+    if (drive != 1)
+    {
+        return CREATE_DIRECTORY_FILESYSTEM_ERROR;
+    }
 
     while (normalized_path[path_length] != '\0')
     {
@@ -315,9 +320,17 @@ static enum CreateDirectoryResult filesystem_create_directory_locked(
         name[index] = normalized_path[last_separator + 1 + index];
     }
     name[name_length] = '\0';
-    if (!ext2_make_directory_name(name, &name_length))
+    if (is_directory && !ext2_make_directory_name(name, &name_length))
     {
         return CREATE_DIRECTORY_INVALID_NAME;
+    }
+    if (!is_directory)
+    {
+        for (index = 0; index < name_length; ++index)
+        {
+            if ((unsigned char)name[index] < 32)
+                return CREATE_DIRECTORY_INVALID_NAME;
+        }
     }
 
     if (last_separator == 0)
@@ -382,7 +395,7 @@ static enum CreateDirectoryResult filesystem_create_directory_locked(
         slot.minimum_record_length = 0;
         slot.unused_record = 1;
     }
-    if (parent_inode.links == 0xFFFF)
+    if (is_directory && parent_inode.links == 0xFFFF)
     {
         return CREATE_DIRECTORY_FULL;
     }
@@ -399,16 +412,16 @@ static enum CreateDirectoryResult filesystem_create_directory_locked(
         return CREATE_DIRECTORY_DISK_FULL;
     }
 
-    block_result = ext2_find_free_block(
-        &filesystem, 0, &block_group, &block_number,
-        &block_bit, &block_bitmap);
-    if (block_result < 0)
+    block_number = 0;
+    if (is_directory)
     {
-        return CREATE_DIRECTORY_IO_ERROR;
-    }
-    if (block_result == 0)
-    {
-        return CREATE_DIRECTORY_DISK_FULL;
+        block_result = ext2_find_free_block(
+            &filesystem, 0, &block_group, &block_number,
+            &block_bit, &block_bitmap);
+        if (block_result < 0)
+            return CREATE_DIRECTORY_IO_ERROR;
+        if (block_result == 0)
+            return CREATE_DIRECTORY_DISK_FULL;
     }
     if (slot_result == 2)
     {
@@ -425,24 +438,39 @@ static enum CreateDirectoryResult filesystem_create_directory_locked(
         }
     }
 
-    if (!ext2_initialize_new_directory(
+    if (is_directory && !ext2_initialize_new_directory(
         &filesystem, block_number, inode_number, parent_inode.inode))
     {
         return CREATE_DIRECTORY_IO_ERROR;
     }
-    if (!ext2_mark_allocated(
-        &filesystem, block_group, block_bitmap, block_bit, 0, 0) ||
+    if ((is_directory && !ext2_mark_allocated(
+        &filesystem, block_group, block_bitmap, block_bit, 0, 0)) ||
         (slot_result == 2 &&
             !ext2_mark_allocated(
                 &filesystem, root_block_group, root_block_bitmap,
                 root_block_bit, 0, 0)) ||
         !ext2_mark_allocated(
-            &filesystem, inode_group, inode_bitmap, inode_bit, 1, 1))
+            &filesystem, inode_group, inode_bitmap, inode_bit, 1, is_directory))
     {
         return CREATE_DIRECTORY_IO_ERROR;
     }
 
-    ext2_initialize_directory_inode(&new_inode, inode_number, block_number);
+    if (is_directory)
+        ext2_initialize_directory_inode(&new_inode, inode_number, block_number);
+    else
+    {
+        new_inode.inode = inode_number;
+        new_inode.size = 0;
+        new_inode.size_high = 0;
+        new_inode.sectors = 0;
+        new_inode.links = 1;
+        new_inode.mode[0] = (unsigned char)(EXT2_S_IFREG | 0644);
+        new_inode.mode[1] = (unsigned char)((EXT2_S_IFREG | 0644) >> 8);
+        for (index = 0; index < 60; ++index)
+            ((volatile unsigned char *)new_inode.block_pointers)[index] = 0;
+    }
+    if (!ext2_clear_inode(&filesystem, inode_number))
+        return CREATE_DIRECTORY_IO_ERROR;
     if (!ext2_write_inode(&filesystem, &new_inode))
     {
         return CREATE_DIRECTORY_IO_ERROR;
@@ -459,7 +487,7 @@ static enum CreateDirectoryResult filesystem_create_directory_locked(
         }
         ext2_write_directory_record(
             block, 0, inode_number, EXT2_BLOCK_SIZE,
-            name, name_length, 2);
+            name, name_length, is_directory ? 2 : 1);
         if (!ext2_write_block(&filesystem, root_block_number, block))
         {
             return CREATE_DIRECTORY_IO_ERROR;
@@ -478,12 +506,12 @@ static enum CreateDirectoryResult filesystem_create_directory_locked(
     }
     else if (!ext2_add_directory_entry(
         &filesystem, &parent_inode, &slot, inode_number,
-        name, name_length))
+        name, name_length, is_directory ? 2 : 1))
     {
         return CREATE_DIRECTORY_IO_ERROR;
     }
 
-    ++parent_inode.links;
+    if (is_directory) ++parent_inode.links;
     if (!ext2_write_inode(&filesystem, &parent_inode))
     {
         return CREATE_DIRECTORY_IO_ERROR;
@@ -496,7 +524,16 @@ enum CreateDirectoryResult filesystem_create_directory(const char *path)
 {
     unsigned int flags = filesystem_disable_interrupts();
     enum CreateDirectoryResult result =
-        filesystem_create_directory_locked(path);
+        filesystem_create_entry_locked(path, 1);
+
+    filesystem_restore_interrupts(flags);
+    return result;
+}
+
+enum CreateDirectoryResult filesystem_create_file(const char *path)
+{
+    unsigned int flags = filesystem_disable_interrupts();
+    enum CreateDirectoryResult result = filesystem_create_entry_locked(path, 0);
 
     filesystem_restore_interrupts(flags);
     return result;

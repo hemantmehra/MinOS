@@ -33,6 +33,7 @@ int filesystem_read_directory(
 int filesystem_close_directory(unsigned int owner, unsigned int stream);
 void filesystem_close_process_directories(unsigned int owner);
 int filesystem_open_file(unsigned int owner, const char *path);
+int filesystem_open_or_create_file(unsigned int owner, const char *path);
 int filesystem_read_file(
     unsigned int owner,
     unsigned int handle,
@@ -56,5 +57,6 @@ enum FileReadResult filesystem_read_root_file(
     unsigned int buffer_size,
     unsigned int *file_size);
 enum CreateDirectoryResult filesystem_create_directory(const char *path);
+enum CreateDirectoryResult filesystem_create_file(const char *path);
 
 #endif

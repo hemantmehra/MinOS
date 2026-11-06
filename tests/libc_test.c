@@ -60,7 +60,8 @@ int main(void)
         CHECK(fseek(file, 0, SEEK_SET) == 0);
         CHECK(fread(text, 1, 3, file) == 3 && memcmp(text, "abc", 3) == 0);
         CHECK(fseek(file, -1, SEEK_END) == 0 && ftell(file) == 2);
-        CHECK(fseek(file, 4, SEEK_SET) != 0);
+        CHECK(fseek(file, 4, SEEK_SET) == 0 && ftell(file) == 4);
+        CHECK(fseek(file, -5, SEEK_CUR) != 0);
         CHECK(fclose(file) == 0);
     }
     file = fopen("B:/WRITE.TXT", "a");

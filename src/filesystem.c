@@ -533,6 +533,23 @@ int ext2_write_inode(
     return ext2_write_block(filesystem, table_block, block);
 }
 
+int ext2_clear_inode(const Ext2FileSystem *filesystem, unsigned int inode)
+{
+    unsigned char descriptor[32], block[EXT2_BLOCK_SIZE];
+    unsigned int group, offset, table_block, index;
+
+    if (inode == 0 || inode > filesystem->inode_count) return 0;
+    group = (inode - 1) / filesystem->inodes_per_group;
+    offset = ((inode - 1) % filesystem->inodes_per_group) * filesystem->inode_size;
+    if (!ext2_read_group_descriptor(filesystem, group, descriptor)) return 0;
+    table_block = read_little_endian_dword(&descriptor[8]) + offset / EXT2_BLOCK_SIZE;
+    offset %= EXT2_BLOCK_SIZE;
+    if (!ext2_read_block(filesystem, table_block, block)) return 0;
+    for (index = 0; index < filesystem->inode_size; ++index)
+        ((volatile unsigned char *)block)[offset + index] = 0;
+    return ext2_write_block(filesystem, table_block, block);
+}
+
 static int ext2_group_has_superblock(
     const Ext2FileSystem *filesystem,
     unsigned int group)
@@ -1625,6 +1642,25 @@ int filesystem_open_file(unsigned int owner, const char *path)
     return (int)(index + 1);
 }
 
+int filesystem_open_or_create_file(unsigned int owner, const char *path)
+{
+    unsigned int index, drive;
+    char canonical[FILESYSTEM_PATH_MAX + 1], normalized[FILESYSTEM_PATH_MAX + 1];
+    int handle;
+    enum CreateDirectoryResult result;
+
+    if (!filesystem_prepare_path(path, canonical, normalized, &drive) || drive != 1)
+        return -1;
+    handle = filesystem_open_file(owner, path);
+    if (handle >= 0) return handle;
+    for (index = 0; index < EXT2_FILE_STREAM_LIMIT; ++index)
+        if (!file_streams[index].active) break;
+    if (index == EXT2_FILE_STREAM_LIMIT) return -1;
+    result = filesystem_create_file(path);
+    if (result != CREATE_DIRECTORY_OK) return -1;
+    return filesystem_open_file(owner, path);
+}
+
 // Allocates a data block for a hole among the 12 direct pointers of an
 // open file and records it in the in-memory inode (the caller writes it).
 static int ext2_allocate_file_block(
@@ -1686,6 +1722,29 @@ int filesystem_write_file(
     if (stream->position > 0xFFFFFFFF - length)
     {
         return -1;
+    }
+
+    if (stream->position > stream->inode.size)
+    {
+        unsigned int target = stream->position;
+        unsigned int zeros[256];
+        unsigned int index;
+
+        if (target >= 12 * EXT2_BLOCK_SIZE)
+            return -1;
+        for (index = 0; index < 256; ++index)
+            ((volatile unsigned int *)zeros)[index] = 0;
+        stream->position = stream->inode.size;
+        while (stream->position < target)
+        {
+            unsigned int remaining = target - stream->position;
+            unsigned int chunk = remaining > 256 ? 256 : remaining;
+            if (filesystem_write_file(owner, handle, zeros, chunk) != (int)chunk)
+            {
+                stream->position = target;
+                return -1;
+            }
+        }
     }
 
     position = stream->position;
@@ -1793,7 +1852,6 @@ int filesystem_seek_file(
         if ((unsigned int)offset > 0x7FFFFFFF - base) return -1;
         position = base + (unsigned int)offset;
     }
-    if (position > stream->inode.size) return -1;
     stream->position = position;
     return (int)position;
 }

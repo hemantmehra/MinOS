@@ -55,7 +55,7 @@ FILE *fopen(const char *restrict path, const char *restrict mode)
     array[i] = 0;
     for (i = 3; i < 16; ++i) if (!streams[i].active) { stream = &streams[i]; break; }
     if (!stream) { errno = EMFILE; return 0; }
-    handle = call1(18, (int)array);
+    handle = call1(kind == 'r' ? 18 : 42, (int)array);
     if (handle < 0) { errno = EIO; return 0; }
     if ((kind != 'r' || update) && call3(22, handle, 0, 0) < 0)
     { call1(20, handle); errno = EIO; return 0; }
