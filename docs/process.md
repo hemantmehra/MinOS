@@ -46,7 +46,7 @@ The loader then:
 
 When a process ends, the kernel frees all of its pages and its page directory.
 The shell prints the process name and ID and continues running. The PIT
-generates timer interrupts at 100 Hz. On each tick, the interrupt stub saves
+generates timer interrupts at 1000 Hz. On each tick, the interrupt stub saves
 the current CPU registers and segments on that task's stack. The round-robin
 scheduler records the saved stack pointer, selects the next active task, and
 returns its saved stack pointer to the interrupt stub. The stub restores that
@@ -101,6 +101,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `31` | Wait for a child process | Child PID in `EBX`; blocks until it exits and returns `1`, or returns `0` if it is not a child |
 | `32` | Create a graphics window | `EBX` points to a non-empty null-terminated title in the caller's image, `ECX` is width (1-640), `EDX` is height (1-480); returns a handle or `0` |
 | `33` | Start a program | `EBX` points to a local array with the null-terminated program name, `ECX` to an array with its arguments (each at least 128 elements, one character per element), `EDX` is flags (`1` background, `2` stdout feeds a pipe, `4` stdin reads the pipe started by the preceding `2` call); returns the child PID (a child of the caller unless background) or the negated start error (`-1` invalid name, `-2` arguments too long, `-3` not found, `-4` too large, `-5` disk error, `-6` invalid executable, `-7` no memory, `-8` process limit, `-9` cleanup error) |
+| `35` | Sleep | `EBX` is the number of milliseconds (capped at 60000); the process is blocked until the 1000 Hz timer reaches the wake-up time and returns `0` |
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;

@@ -12,7 +12,7 @@
 #define PIT_CHANNEL_0 0x40
 #define PIT_COMMAND 0x43
 #define PIT_FREQUENCY 1193182
-#define TIMER_FREQUENCY 100
+#define TIMER_FREQUENCY 1000
 
 #pragma pack(push, 1)
 typedef struct

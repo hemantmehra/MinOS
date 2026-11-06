@@ -13,11 +13,6 @@ void draw_ball(int center_x, int center_y, int radius) {
     }
 }
 
-void wait_frame() {
-    for (int count = 0; count < 30000; count++) {
-    }
-}
-
 int main() {
     if (create_window("Bouncing Ball", 640, 480) == 0) {
         printf("ball: could not create graphics window.\n");
@@ -54,7 +49,7 @@ int main() {
             velocity_y = -velocity_y;
         }
 
-        wait_frame();
+        sleep(16);
     }
     end_graphics_mode();
     return 0;

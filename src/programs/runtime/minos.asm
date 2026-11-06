@@ -77,6 +77,7 @@ SYS1 wait_process, 31
 SYS3 create_window, 32
 SYS3 start_process, 33
 SYS0 terminal_home, 34
+SYS1 sleep, 35
 SYS0 read_key, 2
 
 ; void draw_pixel(int x, int y, int color): EBX = x, EDX = y, ECX = color

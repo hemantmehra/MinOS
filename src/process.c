@@ -31,6 +31,7 @@ enum TaskState
     TASK_LOADING,
     TASK_ACTIVE,
     TASK_WAITING,
+    TASK_SLEEPING,
     TASK_DYING,
     TASK_EXITED,
     TASK_CLEANUP_ERROR
@@ -63,6 +64,7 @@ typedef struct
     unsigned int process_id;
     unsigned int parent_process_id;
     unsigned int wait_process_id;
+    unsigned int wake_tick;
     unsigned int window_handle;
     unsigned int *saved_stack;
     unsigned int page_directory;
@@ -112,6 +114,7 @@ static unsigned int process_table_mapped;
 static ProcessPipe process_pipe;
 static unsigned int current_task;
 static unsigned int next_process_id = 1;
+static volatile unsigned int tick_count;
 
 static unsigned int disable_interrupts(void)
 {
@@ -541,7 +544,7 @@ static void process_terminate(Process *process)
 {
     unsigned int slot;
 
-    if (process->state != TASK_ACTIVE)
+    if (process->state != TASK_ACTIVE && process->state != TASK_SLEEPING)
     {
         return;
     }
@@ -1099,8 +1102,19 @@ static int process_spawn(
 
 unsigned int __cdecl process_timer_tick(unsigned int *saved_stack)
 {
+    unsigned int slot;
+
     processes[current_task].saved_stack = saved_stack;
     __outbyte(0x20, 0x20);
+    ++tick_count;
+    for (slot = 1; slot < TASK_LIMIT; ++slot)
+    {
+        if (processes[slot].state == TASK_SLEEPING &&
+            (int)(tick_count - processes[slot].wake_tick) >= 0)
+        {
+            processes[slot].state = TASK_ACTIVE;
+        }
+    }
     process_cleanup_terminated();
     current_task = find_next_active_task();
     process_activate_current();
@@ -1397,6 +1411,22 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             }
         }
     }
+    else if (syscall_number == PROCESS_SERVICE_SLEEP)
+    {
+        unsigned int milliseconds = saved_stack[8];
+
+        saved_stack[11] = 0;
+        if (milliseconds != 0)
+        {
+            if (milliseconds > 60000)
+            {
+                milliseconds = 60000;
+            }
+            process->wake_tick = tick_count + milliseconds;
+            process->state = TASK_SLEEPING;
+            current_task = find_next_active_task();
+        }
+    }
     else if (syscall_number == PROCESS_SERVICE_TERMINAL_HOME)
     {
         if (!process->background)
@@ -1444,6 +1474,7 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
                 saved_stack[11] = 1;
             }
             else if (child->state == TASK_ACTIVE ||
+                child->state == TASK_SLEEPING ||
                 child->state == TASK_WAITING ||
                 child->state == TASK_DYING)
             {
@@ -1697,7 +1728,8 @@ void process_keyboard_scancode(unsigned char scancode)
         char character;
         int focused;
 
-        if (process->state != TASK_ACTIVE)
+        if (process->state != TASK_ACTIVE &&
+            process->state != TASK_SLEEPING)
         {
             continue;
         }
@@ -1751,7 +1783,8 @@ int process_has_active_process(void)
 
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
-        if (processes[slot].state == TASK_ACTIVE)
+        if (processes[slot].state == TASK_ACTIVE ||
+            processes[slot].state == TASK_SLEEPING)
         {
             return 1;
         }
@@ -1767,6 +1800,7 @@ int process_has_foreground_process(void)
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
         if ((processes[slot].state == TASK_ACTIVE ||
+                processes[slot].state == TASK_SLEEPING ||
                 processes[slot].state == TASK_WAITING ||
                 processes[slot].state == TASK_DYING) &&
             !processes[slot].background)
@@ -1889,7 +1923,8 @@ int process_kill_by_name(
     {
         Process *process = &processes[slot];
 
-        if (process->state == TASK_ACTIVE &&
+        if ((process->state == TASK_ACTIVE ||
+                process->state == TASK_SLEEPING) &&
             process->process_id != caller_process_id &&
             process_name_matches(process->name, name))
         {
@@ -1909,7 +1944,8 @@ int process_kill_by_id(unsigned int process_id)
 
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
-        if (processes[slot].state == TASK_ACTIVE &&
+        if ((processes[slot].state == TASK_ACTIVE ||
+                processes[slot].state == TASK_SLEEPING) &&
             processes[slot].process_id == process_id)
         {
             process_terminate(&processes[slot]);
@@ -1955,8 +1991,10 @@ void process_list(void)
                 terminal_write(slot == current_task ? "RUNNING " : "READY   ");
             }
             break;
+        case TASK_SLEEPING:
+            terminal_write("SLEEPING ");
+            break;
         case TASK_WAITING:
-            terminal_write("WAITING ");
             break;
         case TASK_DYING:
             terminal_write("EXITING ");
