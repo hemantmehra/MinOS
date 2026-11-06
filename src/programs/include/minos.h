@@ -67,6 +67,17 @@ int kill_process(void);
 int get_environment(int index, int *entry);
 int set_environment(const void *entry);
 
+/* Local stream sockets. -2 means retry after sleeping; -1 is an error.
+   send/recv transfer up to 256 bytes using local int arrays. recv returns
+   0 after the peer closes and buffered data has been consumed. */
+int socket(void);
+int socket_listen(int handle, int port);
+int socket_connect(int handle, int port);
+int socket_accept(int handle);
+int socket_send(int handle, int *buffer, int count);
+int socket_recv(int handle, int *buffer, int count);
+int socket_close(int handle);
+
 /* Graphics. A window is required before drawing. */
 int create_window(const char *title, int width, int height);
 void start_graphics_mode(void);

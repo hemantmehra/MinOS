@@ -124,6 +124,23 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `42` | Open or create regular file | `EBX` points to a path; opens an existing file or creates it on `B:` and returns a handle, or `-1` |
 | `43` | Create directory by path | `EBX` points to a path; returns a `CreateDirectoryResult` (`0` on success), or `-1` for an invalid buffer. Creation is restricted to `B:` |
 | `44` | Change directory by path | `EBX` points to a path; returns `0` on success or `-1` |
+| `45` | Create local socket | Returns a new process-owned endpoint handle or `-1` |
+| `46` | Listen on local port | `EBX` is a new endpoint, `ECX` is a port from 1 to 65535; returns `0` or `-1` (including an already-bound port) |
+| `47` | Connect to local port | `EBX` is a new endpoint, `ECX` is the port; returns `0`, `-1` for invalid input or no listener, or `-2` if endpoint capacity is exhausted |
+| `48` | Accept local connection | Listener in `EBX`; returns a connected endpoint, `-2` when none are pending, or `-1` on error |
+| `49` | Send local bytes | Endpoint in `EBX`, stack integer array in `ECX`, length in `EDX` (0–256); returns bytes sent, `-2` if the peer buffer is full, or `-1` on error or peer closure |
+| `50` | Receive local bytes | Endpoint in `EBX`, writable stack integer array in `ECX`, length in `EDX` (0–256); returns bytes received, `-2` when empty, `0` after peer closure and draining, or `-1` on error |
+| `51` | Close local socket | Endpoint in `EBX`; returns `0` or `-1` |
+
+These local streams do not implement TCP/IP or POSIX sockets. There are 32
+endpoints system-wide, including listeners and pending connections, and each
+endpoint has a 1024-byte receive buffer. Send can write fewer bytes than
+requested; applications must retry the remainder. For nonzero receive
+lengths, zero means EOF; zero-length send and receive return zero. Closing a
+listener closes its unaccepted connections, and process termination closes
+all of its endpoints. Buffered data remains readable after the peer closes.
+The kernel runs and supervises `HTTPSRV.EXE` on local port 8000; `httpget`
+is a sample client.
 
 The kernel checks that a print pointer and its terminating null byte are
 within the process image. Keyboard events are queued for active processes;

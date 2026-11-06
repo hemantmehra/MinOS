@@ -2,6 +2,7 @@
 #include "filesystem.h"
 #include "kernel_log.h"
 #include "process_internal.h"
+#include "loopback.h"
 
 unsigned int process_count;
 unsigned int process_table_mapped;
@@ -257,6 +258,7 @@ void process_terminate(Process *process)
         process->process_id);
     filesystem_close_process_directories(process->process_id);
     filesystem_close_process_files(process->process_id);
+    loopback_close_owner(process->process_id);
     process_pipe_close_endpoint(process);
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {

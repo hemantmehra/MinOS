@@ -3,6 +3,25 @@
 #include "kernel_log.h"
 #include "process_internal.h"
 
+int process_is_running(unsigned int process_id)
+{
+    unsigned int flags = disable_interrupts();
+    unsigned int slot;
+    int running = 0;
+    for (slot = 1; process_id != 0 && slot < TASK_LIMIT; ++slot)
+        if (processes[slot].process_id == process_id &&
+            (processes[slot].state == TASK_ACTIVE ||
+             processes[slot].state == TASK_SLEEPING ||
+             processes[slot].state == TASK_WAITING ||
+             processes[slot].state == TASK_LOADING))
+        {
+            running = 1;
+            break;
+        }
+    restore_interrupts(flags);
+    return running;
+}
+
 int process_has_active_process(void)
 {
     unsigned int slot;

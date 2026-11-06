@@ -148,6 +148,7 @@ def run_msvc(developer_command):
         "memory.c",
         "process.c",
         "process_io.c",
+        "loopback.c",
         "process_user.c",
         "process_start.c",
         "process_elf.c",

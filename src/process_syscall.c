@@ -2,6 +2,7 @@
 #include "filesystem.h"
 #include "kernel_log.h"
 #include "process_internal.h"
+#include "loopback.h"
 
 unsigned int __cdecl process_system_call(unsigned int *saved_stack)
 {
@@ -270,6 +271,29 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
                 restore_interrupts(flags);
             }
         }
+    }
+    else if (syscall_number == PROCESS_SERVICE_SOCKET)
+        saved_stack[11] = (unsigned int)loopback_socket(process->process_id);
+    else if (syscall_number == PROCESS_SERVICE_SOCKET_LISTEN)
+        saved_stack[11] = (unsigned int)loopback_listen(process->process_id, saved_stack[8], saved_stack[10]);
+    else if (syscall_number == PROCESS_SERVICE_SOCKET_CONNECT)
+        saved_stack[11] = (unsigned int)loopback_connect(process->process_id, saved_stack[8], saved_stack[10]);
+    else if (syscall_number == PROCESS_SERVICE_SOCKET_ACCEPT)
+        saved_stack[11] = (unsigned int)loopback_accept(process->process_id, saved_stack[8]);
+    else if (syscall_number == PROCESS_SERVICE_SOCKET_CLOSE)
+        saved_stack[11] = (unsigned int)loopback_close(process->process_id, saved_stack[8]);
+    else if (syscall_number == PROCESS_SERVICE_SOCKET_SEND ||
+        syscall_number == PROCESS_SERVICE_SOCKET_RECV)
+    {
+        unsigned int count = saved_stack[9];
+        unsigned int address = saved_stack[10];
+        if (count > 256 || (count != 0 &&
+            !process_stack_buffer_is_valid(process, address, count * sizeof(unsigned int))))
+            saved_stack[11] = (unsigned int)-1;
+        else if (syscall_number == PROCESS_SERVICE_SOCKET_SEND)
+            saved_stack[11] = (unsigned int)loopback_send(process->process_id, saved_stack[8], (const unsigned int *)address, count);
+        else
+            saved_stack[11] = (unsigned int)loopback_recv(process->process_id, saved_stack[8], (unsigned int *)address, count);
     }
     else if (syscall_number == PROCESS_SERVICE_SEEK_FILE)
     {

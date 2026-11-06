@@ -97,6 +97,29 @@ run the former only against a disposable data disk because it overwrites
 be run only on a disposable disk; running it with an argument verifies persistence
 after reboot.
 
+### Local HTTP service
+
+The kernel starts `HTTPSRV.EXE` in the background and retries starting it
+after it exits. Run `httpget` in the shell to send `GET /` to
+`localhost:8000` and display the HTTP response, whose body is `Hello World`.
+The server accepts HTTP/1.0 or HTTP/1.1 GET requests for `/`, replies with
+400 for other or incomplete requests, and times out an incomplete request
+after five seconds. It handles clients sequentially.
+
+These are **MinOS-local byte streams**, not TCP/IP: there is no NIC, DNS,
+external network access, host access, or POSIX socket compatibility. The
+minc runtime exposes `socket`, `socket_listen`, `socket_connect`,
+`socket_accept`, `socket_send`, `socket_recv`, and `socket_close`. There are
+32 endpoints total (a connection uses two), a 1024-byte receive buffer per
+endpoint, and at most 256 integer-array byte values per send/receive call.
+Calls are nonblocking: `-2` means retry, `-1` means error, and receive
+returns zero when the peer has closed and buffered data has been drained.
+Handles belong to their creating process and are closed automatically on
+exit. See [process system calls](docs/process.md#system-calls) for details.
+`tests\loopback_test.c` exercises endpoint lifecycle and buffering on the
+host; `tests\http_socket.c` is a minc guest test for HTTP framing,
+fragmentation, invalid requests and timeout recovery.
+
 ## Features
 
 **Boot and CPU**

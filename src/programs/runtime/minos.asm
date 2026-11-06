@@ -29,6 +29,16 @@ _%1:
     pop ebx
     ret
 %endmacro
+%macro SYS2 2
+_%1:
+    push ebx
+    mov ebx, [esp + 8]
+    mov ecx, [esp + 12]
+    mov eax, %2
+    int 0x80
+    pop ebx
+    ret
+%endmacro
 %macro SYSBUF 3                 ; EBX = arg0, ECX = arg1 buffer, EDX = capacity
 _%1:
     push ebx
@@ -84,6 +94,13 @@ SYS1 open_or_create_file, 42
 SYS1 mkdir_path, 43
 SYS1 chdir_path, 44
 SYS3 seek_file, 38
+SYS0 socket, 45
+SYS2 socket_listen, 46
+SYS2 socket_connect, 47
+SYS1 socket_accept, 48
+SYS3 socket_send, 49
+SYS3 socket_recv, 50
+SYS1 socket_close, 51
 SYS0 read_key, 2
 
 ; void draw_pixel(int x, int y, int color): EBX = x, EDX = y, ECX = color

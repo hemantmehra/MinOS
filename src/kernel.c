@@ -151,6 +151,8 @@ void shell_run_service(
 void __cdecl kernel_main(void)
 {
     unsigned int process_id;
+    unsigned int server_id = 0;
+    unsigned int server_retry = 0;
     enum ProcessStartResult result;
 
     kernel_log(KERNEL_LOG_INFO, "kernel", "booting");
@@ -162,34 +164,37 @@ void __cdecl kernel_main(void)
 
     for (;;)
     {
-        while (process_has_foreground_process())
+        if (!process_is_running(server_id) &&
+            (int)(tick_count - server_retry) >= 0)
+        {
+            if (server_id != 0)
+                kernel_log(KERNEL_LOG_WARNING, "kernel", "restarting HTTP server after exit");
+            result = process_start("A:/Programs/HTTPSRV.EXE", "", &server_id, 1);
+            if (result != PROCESS_START_OK)
+            {
+                server_id = 0;
+                kernel_log_value(KERNEL_LOG_ERROR, "kernel", "HTTP server start failed", (unsigned int)result);
+            }
+            server_retry = tick_count + 1000;
+        }
+        if (!process_has_foreground_process())
+        {
+            result = process_start("A:/Programs/SHELL.EXE", "", &process_id, 0);
+            if (result != PROCESS_START_OK)
+            {
+                kernel_log_value(KERNEL_LOG_ERROR, "kernel", "shell start failed with result", (unsigned int)result);
+                terminal_write("kernel: could not start SHELL.EXE.\n");
+                for (;;) {}
+            }
+            kernel_log(KERNEL_LOG_INFO, "kernel", "shell started");
+        }
+        else
         {
             unsigned int request = video_take_launch_request();
             unsigned int close_id = video_take_close_request();
-
-            if (close_id != 0)
-            {
-                process_kill_by_id(close_id);
-            }
+            if (close_id != 0) process_kill_by_id(close_id);
             if (request == 1)
-            {
                 process_start("A:/Programs/BALL.EXE", "", &process_id, 0);
-            }
         }
-
-        result = process_start("A:/Programs/SHELL.EXE", "", &process_id, 0);
-        if (result != PROCESS_START_OK)
-        {
-            kernel_log_value(
-                KERNEL_LOG_ERROR,
-                "kernel",
-                "shell start failed with result",
-                (unsigned int)result);
-            terminal_write("kernel: could not start SHELL.EXE.\n");
-            for (;;)
-            {
-            }
-        }
-        kernel_log(KERNEL_LOG_INFO, "kernel", "shell started");
     }
 }

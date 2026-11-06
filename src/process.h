@@ -59,7 +59,14 @@ enum ProcessService
     PROCESS_SERVICE_SET_ENVIRONMENT,
     PROCESS_SERVICE_OPEN_OR_CREATE,
     PROCESS_SERVICE_MKDIR_PATH,
-    PROCESS_SERVICE_CHDIR_PATH
+    PROCESS_SERVICE_CHDIR_PATH,
+    PROCESS_SERVICE_SOCKET,
+    PROCESS_SERVICE_SOCKET_LISTEN,
+    PROCESS_SERVICE_SOCKET_CONNECT,
+    PROCESS_SERVICE_SOCKET_ACCEPT,
+    PROCESS_SERVICE_SOCKET_SEND,
+    PROCESS_SERVICE_SOCKET_RECV,
+    PROCESS_SERVICE_SOCKET_CLOSE
 };
 
 enum ProcessStandardHandle
@@ -78,6 +85,8 @@ enum ProcessStartResult process_start(
 void process_list(void);
 int process_has_active_process(void);
 int process_has_foreground_process(void);
+int process_is_running(unsigned int process_id);
+extern volatile unsigned int tick_count;
 int process_kill_by_name(
     unsigned int caller_process_id, const char *name);
 int process_kill_by_id(unsigned int process_id);
