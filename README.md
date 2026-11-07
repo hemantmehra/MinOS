@@ -141,6 +141,15 @@ fragmentation, invalid requests and timeout recovery.
 - The kernel starts the shell as an ordinary program (`SHELL.EXE`) and
   restarts it if it exits. The shell parses commands and uses the
   `start_process` and `wait_process` services to run other programs.
+- The kernel also supervises the user-mode `MINDESK.EXE` desktop server.
+  Window creation requests and mouse events are handled by Mindesk; the
+  kernel retains framebuffer composition, window buffers, and keyboard
+  delivery. Existing windows survive a Mindesk restart. A pending window
+  request fails if the server exits, and new requests fail until it restarts.
+  `tests\desktop_client.c` exercises server-call authorization and window
+  creation. The `tests\desktop_wait_*` programs and
+  `tests\desktop_sleep_server.c` test cancellation using a deliberately
+  nonresponsive server on an isolated test image.
 - Foreground and background (`&`) processes, one pipe between programs
   (`a | b`), `kill`, and child-process creation and waiting.
 - System calls through `int 0x80`: print, exit, keyboard scancode polling,

@@ -3,6 +3,7 @@
 #include "kernel_log.h"
 #include "process_internal.h"
 #include "loopback.h"
+#include "desktop.h"
 
 unsigned int __cdecl process_system_call(unsigned int *saved_stack)
 {
@@ -490,6 +491,7 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
             else if (child->state == TASK_ACTIVE ||
                 child->state == TASK_SLEEPING ||
                 child->state == TASK_WAITING ||
+                child->state == TASK_DESKTOP_WAIT ||
                 child->state == TASK_DYING)
             {
                 process->wait_process_id = child_process_id;
@@ -657,19 +659,59 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         char title[32];
 
         if (process->background || process->window_handle != 0 ||
+            desktop_server_id() == 0 ||
             !process_copy_user_title(process, saved_stack[8], title))
         {
             saved_stack[11] = 0;
         }
         else
         {
-            process->window_handle = video_create_window(
-                process->process_id,
-                title,
-                saved_stack[10],
-                saved_stack[9]);
-            saved_stack[11] = process->window_handle;
+            unsigned int i;
+            volatile char *target = process->desktop_title;
+            for (i = 0; i < 32; ++i)
+            {
+                target[i] = title[i];
+                if (title[i] == '\0') break;
+            }
+            process->desktop_width = saved_stack[10];
+            process->desktop_height = saved_stack[9];
+            process->state = TASK_DESKTOP_WAIT;
+            current_task = find_next_active_task();
         }
+    }
+    else if (syscall_number == PROCESS_SERVICE_DESKTOP_NEXT ||
+        syscall_number == PROCESS_SERVICE_DESKTOP_INFO)
+    {
+        unsigned int address = saved_stack[10];
+        unsigned int count = syscall_number == PROCESS_SERVICE_DESKTOP_NEXT ? 3 : 8;
+        if (process->process_id != desktop_server_id() ||
+            !process_stack_buffer_is_valid(process, address, count * sizeof(unsigned int)))
+            saved_stack[11] = (unsigned int)-1;
+        else if (syscall_number == PROCESS_SERVICE_DESKTOP_NEXT)
+            saved_stack[11] = (unsigned int)desktop_next((unsigned int *)address);
+        else
+            saved_stack[11] = (unsigned int)video_desktop_info(saved_stack[8], (unsigned int *)address);
+    }
+    else if (syscall_number == PROCESS_SERVICE_DESKTOP_CREATE)
+    {
+        saved_stack[11] = process->process_id == desktop_server_id()
+            ? (unsigned int)desktop_create(saved_stack[8], saved_stack[10]) : (unsigned int)-1;
+    }
+    else if (syscall_number == PROCESS_SERVICE_DESKTOP_ACTION)
+    {
+        if (process->process_id != desktop_server_id())
+            saved_stack[11] = (unsigned int)-1;
+        else if (saved_stack[8] == 5)
+            saved_stack[11] = process_kill_by_id(saved_stack[10]) ? 0 : (unsigned int)-1;
+        else if (saved_stack[8] == 6)
+        {
+            unsigned int pid;
+            enum ProcessStartResult result = process_start(
+                "A:/Programs/BALL.EXE", "", &pid, 0);
+            saved_stack[11] = result == PROCESS_START_OK ? 0 : (unsigned int)-1;
+        }
+        else
+            saved_stack[11] = (unsigned int)video_desktop_action(saved_stack[8], saved_stack[10], saved_stack[9]);
     }
     else if (syscall_number == PROCESS_SERVICE_START_GRAPHICS &&
         process->window_handle == 0)

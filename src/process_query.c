@@ -2,6 +2,18 @@
 #include "filesystem.h"
 #include "kernel_log.h"
 #include "process_internal.h"
+#include "desktop.h"
+
+enum ProcessStartResult process_start_desktop(unsigned int *pid)
+{
+    unsigned int flags = disable_interrupts();
+    enum ProcessStartResult result = process_start(
+        "A:/Programs/MINDESK.EXE", "", pid, 1);
+    if (result == PROCESS_START_OK)
+        desktop_set_server(*pid);
+    restore_interrupts(flags);
+    return result;
+}
 
 int process_is_running(unsigned int process_id)
 {
@@ -13,6 +25,7 @@ int process_is_running(unsigned int process_id)
             (processes[slot].state == TASK_ACTIVE ||
              processes[slot].state == TASK_SLEEPING ||
              processes[slot].state == TASK_WAITING ||
+             processes[slot].state == TASK_DESKTOP_WAIT ||
              processes[slot].state == TASK_LOADING))
         {
             running = 1;
@@ -29,7 +42,8 @@ int process_has_active_process(void)
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
         if (processes[slot].state == TASK_ACTIVE ||
-            processes[slot].state == TASK_SLEEPING)
+            processes[slot].state == TASK_SLEEPING ||
+            processes[slot].state == TASK_DESKTOP_WAIT)
         {
             return 1;
         }
@@ -47,6 +61,7 @@ int process_has_foreground_process(void)
         if ((processes[slot].state == TASK_ACTIVE ||
                 processes[slot].state == TASK_SLEEPING ||
                 processes[slot].state == TASK_WAITING ||
+                processes[slot].state == TASK_DESKTOP_WAIT ||
                 processes[slot].state == TASK_DYING) &&
             !processes[slot].background)
         {
@@ -169,7 +184,8 @@ int process_kill_by_name(
         Process *process = &processes[slot];
 
         if ((process->state == TASK_ACTIVE ||
-                process->state == TASK_SLEEPING) &&
+                process->state == TASK_SLEEPING ||
+                process->state == TASK_DESKTOP_WAIT) &&
             process->process_id != caller_process_id &&
             process_name_matches(process->name, name))
         {
@@ -190,7 +206,8 @@ int process_kill_by_id(unsigned int process_id)
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
         if ((processes[slot].state == TASK_ACTIVE ||
-                processes[slot].state == TASK_SLEEPING) &&
+                processes[slot].state == TASK_SLEEPING ||
+                processes[slot].state == TASK_DESKTOP_WAIT) &&
             processes[slot].process_id == process_id)
         {
             process_terminate(&processes[slot]);
@@ -240,6 +257,10 @@ void process_list(void)
             terminal_write("SLEEPING ");
             break;
         case TASK_WAITING:
+            terminal_write("WAITING ");
+            break;
+        case TASK_DESKTOP_WAIT:
+            terminal_write("DESKTOP ");
             break;
         case TASK_DYING:
             terminal_write("EXITING ");

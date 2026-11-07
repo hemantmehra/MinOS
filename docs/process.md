@@ -112,7 +112,7 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `29` | Present the back buffer | No arguments |
 | `30` | Create a child process | `EBX` points to a null-terminated executable name in the caller's image; returns the child PID or `-1` |
 | `31` | Wait for a child process | Child PID in `EBX`; blocks until it exits and returns its status (0–255), or `-1` on failure. Abnormal termination returns 255 |
-| `32` | Create a graphics window | `EBX` points to a non-empty null-terminated title in the caller's image, `ECX` is width (1-640), `EDX` is height (1-480); returns a handle or `0` |
+| `32` | Create a graphics window | `EBX` points to a non-empty null-terminated title in the caller's image, `ECX` is width (1-640), `EDX` is height (1-480); waits for Mindesk and returns a handle or `0` on failure |
 | `33` | Start a program | `EBX` points to a local array with the null-terminated program name, `ECX` to an array with its arguments (each at least 128 elements, one character per element), `EDX` is flags (`1` background, `2` stdout feeds a pipe, `4` stdin reads the pipe started by the preceding `2` call); returns the child PID (a child of the caller unless background) or the negated start error (`-1` invalid name, `-2` arguments too long, `-3` not found, `-4` too large, `-5` disk error, `-6` invalid executable, `-7` no memory, `-8` process limit, `-9` cleanup error) |
 | `35` | Sleep | `EBX` is the number of milliseconds (capped at 60000); the process is blocked until the 1000 Hz timer reaches the wake-up time and returns `0` |
 | `36` | Grow heap | Maps one zeroed 4 KiB user page, up to 16 MiB per process; returns its address or `0` on failure |
@@ -131,6 +131,29 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `49` | Send local bytes | Endpoint in `EBX`, stack integer array in `ECX`, length in `EDX` (0–256); returns bytes sent, `-2` if the peer buffer is full, or `-1` on error or peer closure |
 | `50` | Receive local bytes | Endpoint in `EBX`, writable stack integer array in `ECX`, length in `EDX` (0–256); returns bytes received, `-2` when empty, `0` after peer closure and draining, or `-1` on error |
 | `51` | Close local socket | Endpoint in `EBX`; returns `0` or `-1` |
+| `52` | Desktop event | Mindesk only: `ECX` points to a writable stack array of 3 integers; returns `1` for an event, `0` when empty, or `-1` |
+| `53` | Complete window request | Mindesk only: client PID in `EBX`, approval (0 or 1) in `ECX`; rejects or allocates the requested window and wakes the client, returning `0` or `-1` if the request no longer exists |
+| `54` | Desktop window information | Mindesk only: slot in `EBX` (0–31), writable stack array of 8 integers in `ECX`; returns `1` if present, `0` if empty, or `-1`. Slot 32 returns shell focus in the first element |
+| `55` | Desktop action | Mindesk only: action in `EBX`, handle or PID in `ECX`, value in `EDX`; returns `0` or `-1` |
+
+`MINDESK.EXE` is a supervised user process. It receives window requests and
+mouse button/drag events, implements taskbar, Start menu, window selection and
+dragging policy, and asks the kernel to apply window and process actions.
+Desktop events contain a type and two integer arguments: `1` requests window
+creation by PID with width and height packed into the low and high 16 bits
+of the second argument (zero for unrepresentable sizes); `2`, `3`, and `4`
+are mouse press, held movement, and release with x/y coordinates. Mindesk
+approves only windows within the supported size limits, which the kernel
+also checks. The mouse queue holds 63 events and coalesces
+held movement; overflow is logged. Window information contains handle, owner
+PID, x, y, width, height, visibility and stacking rank. Actions select shell
+(`1`), select window (`2`), move window (`3`, x in low 16 bits and y in high
+16), set Start-menu state (`4`, value 0 or 1), close a PID (`5`), or launch
+Ball (`6`). The kernel authenticates these calls using the supervised server
+PID. It retains drawing, buffers, focus-based keyboard delivery and cleanup.
+If Mindesk exits, pending creation requests return `0`; the supervisor
+restarts it and existing window buffers remain. Requests made while it is
+unavailable fail immediately rather than blocking indefinitely.
 
 These local streams do not implement TCP/IP or POSIX sockets. There are 32
 endpoints system-wide, including listeners and pending connections, and each

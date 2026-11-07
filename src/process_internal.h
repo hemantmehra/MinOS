@@ -35,6 +35,7 @@ enum TaskState
     TASK_LOADING,
     TASK_ACTIVE,
     TASK_WAITING,
+    TASK_DESKTOP_WAIT,
     TASK_SLEEPING,
     TASK_DYING,
     TASK_EXITED,
@@ -71,6 +72,9 @@ typedef struct
     unsigned int exit_status;
     unsigned int wake_tick;
     unsigned int window_handle;
+    char desktop_title[32];
+    unsigned int desktop_width;
+    unsigned int desktop_height;
     unsigned int *saved_stack;
     unsigned int page_directory;
     unsigned int code_base;

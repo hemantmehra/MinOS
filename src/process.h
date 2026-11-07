@@ -66,7 +66,11 @@ enum ProcessService
     PROCESS_SERVICE_SOCKET_ACCEPT,
     PROCESS_SERVICE_SOCKET_SEND,
     PROCESS_SERVICE_SOCKET_RECV,
-    PROCESS_SERVICE_SOCKET_CLOSE
+    PROCESS_SERVICE_SOCKET_CLOSE,
+    PROCESS_SERVICE_DESKTOP_NEXT,
+    PROCESS_SERVICE_DESKTOP_CREATE,
+    PROCESS_SERVICE_DESKTOP_INFO,
+    PROCESS_SERVICE_DESKTOP_ACTION
 };
 
 enum ProcessStandardHandle
@@ -82,6 +86,7 @@ enum ProcessStartResult process_start(
     const char *arguments,
     unsigned int *process_id,
     int background);
+enum ProcessStartResult process_start_desktop(unsigned int *pid);
 void process_list(void);
 int process_has_active_process(void);
 int process_has_foreground_process(void);

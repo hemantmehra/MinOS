@@ -3,6 +3,7 @@
 #include "kernel_log.h"
 #include "process_internal.h"
 #include "loopback.h"
+#include "desktop.h"
 
 unsigned int process_count;
 unsigned int process_table_mapped;
@@ -246,7 +247,8 @@ void process_terminate(Process *process)
 {
     unsigned int slot;
 
-    if (process->state != TASK_ACTIVE && process->state != TASK_SLEEPING)
+    if (process->state != TASK_ACTIVE && process->state != TASK_SLEEPING &&
+        process->state != TASK_DESKTOP_WAIT)
     {
         return;
     }
@@ -259,6 +261,7 @@ void process_terminate(Process *process)
     filesystem_close_process_directories(process->process_id);
     filesystem_close_process_files(process->process_id);
     loopback_close_owner(process->process_id);
+    desktop_server_exit(process->process_id);
     process_pipe_close_endpoint(process);
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {

@@ -153,6 +153,8 @@ void __cdecl kernel_main(void)
     unsigned int process_id;
     unsigned int server_id = 0;
     unsigned int server_retry = 0;
+    unsigned int desktop_id = 0;
+    unsigned int desktop_retry = 0;
     enum ProcessStartResult result;
 
     kernel_log(KERNEL_LOG_INFO, "kernel", "booting");
@@ -164,6 +166,19 @@ void __cdecl kernel_main(void)
 
     for (;;)
     {
+        if (!process_is_running(desktop_id) &&
+            (int)(tick_count - desktop_retry) >= 0)
+        {
+            if (desktop_id != 0)
+                kernel_log(KERNEL_LOG_WARNING, "kernel", "restarting desktop server after exit");
+            result = process_start_desktop(&desktop_id);
+            if (result != PROCESS_START_OK)
+            {
+                desktop_id = 0;
+                kernel_log_value(KERNEL_LOG_ERROR, "kernel", "desktop server start failed", (unsigned int)result);
+            }
+            desktop_retry = tick_count + 1000;
+        }
         if (!process_is_running(server_id) &&
             (int)(tick_count - server_retry) >= 0)
         {
@@ -187,14 +202,6 @@ void __cdecl kernel_main(void)
                 for (;;) {}
             }
             kernel_log(KERNEL_LOG_INFO, "kernel", "shell started");
-        }
-        else
-        {
-            unsigned int request = video_take_launch_request();
-            unsigned int close_id = video_take_close_request();
-            if (close_id != 0) process_kill_by_id(close_id);
-            if (request == 1)
-                process_start("A:/Programs/BALL.EXE", "", &process_id, 0);
         }
     }
 }

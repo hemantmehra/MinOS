@@ -78,6 +78,12 @@ int socket_send(int handle, int *buffer, int count);
 int socket_recv(int handle, int *buffer, int count);
 int socket_close(int handle);
 
+/* Private desktop-server interface; only the supervised mindesk may use it. */
+int desktop_next(int unused, int *event);
+int desktop_create(int process_id, int approve);
+int desktop_info(int index, int *info);
+int desktop_action(int action, int handle, int value);
+
 /* Graphics. A window is required before drawing. */
 int create_window(const char *title, int width, int height);
 void start_graphics_mode(void);

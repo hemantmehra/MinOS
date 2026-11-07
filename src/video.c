@@ -96,12 +96,7 @@ static GraphicsWindow graphics_windows[GRAPHICS_WINDOW_LIMIT];
 static unsigned int window_stack[GRAPHICS_WINDOW_LIMIT];
 static unsigned int window_stack_count;
 static int active_window_slot = -1;
-static int dragging_window_slot = -1;
-static unsigned int mouse_drag_offset_x;
-static unsigned int mouse_drag_offset_y;
 static unsigned char start_menu_open;
-static volatile unsigned int pending_launch_request;
-static volatile unsigned int pending_close_request;
 static unsigned char shell_window_active = 1;
 static unsigned char shell_graphics_active;
 static unsigned int mouse_pointer_x = VGA_GRAPHICS_WIDTH / 2;
@@ -1415,10 +1410,6 @@ int video_destroy_window(
         return 0;
     }
     slot = window_handle - 1;
-    if (dragging_window_slot == (int)slot)
-    {
-        dragging_window_slot = -1;
-    }
     window->visible = 0;
     graphics_window_remove_from_stack(slot);
     if (active_window_slot == (int)slot)
@@ -1685,10 +1676,6 @@ void video_end_graphics(
 
         if (graphics_window_lookup(owner_process_id, window_handle, &window))
         {
-            if (dragging_window_slot == (int)(window_handle - 1))
-            {
-                dragging_window_slot = -1;
-            }
             window->visible = 0;
             if (active_window_slot == (int)(window_handle - 1))
             {
@@ -1723,45 +1710,7 @@ void video_mouse_move(
 {
     unsigned int page;
 
-    if (left_button_pressed && dragging_window_slot >= 0)
-    {
-        GraphicsWindow *window =
-            &graphics_windows[dragging_window_slot];
-        unsigned int next_x = x >= mouse_drag_offset_x
-            ? x - mouse_drag_offset_x
-            : 0;
-        unsigned int next_y = y >= mouse_drag_offset_y
-            ? y - mouse_drag_offset_y
-            : 0;
-        unsigned int maximum_x =
-            VGA_GRAPHICS_WIDTH - window->width - 4;
-        unsigned int maximum_y =
-            TASKBAR_Y - window->height - SHELL_TITLE_HEIGHT - 4;
-
-        if (next_x > maximum_x)
-        {
-            next_x = maximum_x;
-        }
-        if (next_y > maximum_y)
-        {
-            next_y = maximum_y;
-        }
-        mouse_pointer_x = x;
-        mouse_pointer_y = y;
-        window->x = next_x;
-        window->y = next_y;
-        vga_render_current_desktop_to(vga_back_buffer);
-        vbe_write_register(
-            VGA_VBE_INDEX_Y_OFFSET,
-            (unsigned short)(
-                vga_back_buffer_index * VGA_GRAPHICS_HEIGHT));
-        vga_back_buffer_index ^= 1;
-        vga_back_buffer = vga_framebuffer +
-            vga_back_buffer_index * VGA_FRAMEBUFFER_SIZE;
-        return;
-    }
-
-    dragging_window_slot = -1;
+    (void)left_button_pressed;
     vga_restore_mouse_pointer(0);
     vga_restore_mouse_pointer(1);
     mouse_pointer_x = x;
@@ -1773,122 +1722,70 @@ void video_mouse_move(
     }
 }
 
-void video_mouse_left_click(unsigned int x, unsigned int y)
+int video_desktop_info(unsigned int index, unsigned int *info)
 {
-    unsigned int count;
-
-    if (start_menu_open)
+    unsigned int rank;
+    GraphicsWindow *window;
+    if (index == GRAPHICS_WINDOW_LIMIT)
     {
-        unsigned int menu_top =
-            TASKBAR_Y - START_MENU_ITEM_COUNT * START_MENU_ITEM_HEIGHT;
-
-        start_menu_open = 0;
-        if (x < START_MENU_WIDTH && y >= menu_top && y < TASKBAR_Y)
-        {
-            unsigned int item = (y - menu_top) / START_MENU_ITEM_HEIGHT;
-
-            if (item == 0)
-            {
-                shell_window_active = 1;
-                active_window_slot = -1;
-            }
-            else
-            {
-                pending_launch_request = item;
-            }
-        }
-        else if (y >= TASKBAR_Y && x < START_BUTTON_WIDTH)
-        {
-            vga_redraw_desktop();
-            return;
-        }
-        else
-        {
-            vga_redraw_desktop();
-            video_mouse_left_click(x, y);
-            return;
-        }
-        vga_redraw_desktop();
-        return;
+        info[0] = shell_window_active;
+        return 1;
     }
+    if (index >= GRAPHICS_WINDOW_LIMIT) return -1;
+    window = &graphics_windows[index];
+    if (!window->owner_process_id || !window->page_count) return 0;
+    info[0] = index + 1;
+    info[1] = window->owner_process_id;
+    info[2] = window->x;
+    info[3] = window->y;
+    info[4] = window->width;
+    info[5] = window->height;
+    info[6] = window->visible;
+    info[7] = 0;
+    for (rank = 0; rank < window_stack_count; ++rank)
+        if (window_stack[rank] == index) info[7] = rank + 1;
+    return 1;
+}
 
-    if (y >= TASKBAR_Y)
+int video_desktop_action(unsigned int action, unsigned int handle, unsigned int value)
+{
+    GraphicsWindow *window;
+    unsigned int x, y;
+    if (action == 1)
     {
-        unsigned int item;
-        int slot;
-
-        if (x < START_BUTTON_WIDTH)
+        shell_window_active = 1;
+        active_window_slot = -1;
+    }
+    else if (action == 4)
+        start_menu_open = value != 0;
+    else if ((action == 2 || action == 3) && handle > 0 &&
+        handle <= GRAPHICS_WINDOW_LIMIT &&
+        graphics_windows[handle - 1].owner_process_id != 0 &&
+        graphics_windows[handle - 1].page_count != 0)
+    {
+        window = &graphics_windows[handle - 1];
+        if (action == 2)
         {
-            start_menu_open = 1;
-            vga_redraw_desktop();
-            return;
-        }
-        x -= START_BUTTON_WIDTH;
-        count = taskbar_item_count();
-        if (x >= count * taskbar_item_width(count))
-        {
-            return;
-        }
-        item = x / taskbar_item_width(count);
-        slot = taskbar_window_slot(item);
-        if (slot < 0)
-        {
-            shell_window_active = 1;
-            active_window_slot = -1;
-        }
-        else
-        {
-            graphics_windows[slot].visible = 1;
-            graphics_window_bring_to_front((unsigned int)slot);
-            active_window_slot = slot;
+            window->visible = 1;
+            graphics_window_bring_to_front(handle - 1);
+            active_window_slot = (int)handle - 1;
             shell_window_active = 0;
         }
-        vga_redraw_desktop();
-        return;
-    }
-
-    if (!shell_window_active)
-    {
-        unsigned int index = window_stack_count;
-
-        while (index != 0)
+        else
         {
-            unsigned int slot = window_stack[--index];
-            GraphicsWindow *window = &graphics_windows[slot];
-
-            if (window->visible &&
-                x >= window->x &&
-                x < window->x + window->width + 4 &&
-                y >= window->y &&
-                y < window->y + window->height + SHELL_TITLE_HEIGHT + 4)
-            {
-                graphics_window_bring_to_front(slot);
-                active_window_slot = (int)slot;
-                shell_window_active = 0;
-                if (x >= window->x + window->width + 3 -
-                        CLOSE_BUTTON_SIZE - 4 &&
-                    x < window->x + window->width + 3 - 4 &&
-                    y >= window->y + 5 &&
-                    y < window->y + 5 + CLOSE_BUTTON_SIZE)
-                {
-                    pending_close_request = window->owner_process_id;
-                }
-                else if (y >= window->y + 1 &&
-                    y < window->y + SHELL_TITLE_HEIGHT + 1)
-                {
-                    dragging_window_slot = (int)slot;
-                    mouse_drag_offset_x = x - window->x;
-                    mouse_drag_offset_y = y - window->y;
-                }
-                vga_redraw_desktop();
-                return;
-            }
+            x = value & 0xFFFF;
+            y = value >> 16;
+            if (x > VGA_GRAPHICS_WIDTH - window->width - 4)
+                x = VGA_GRAPHICS_WIDTH - window->width - 4;
+            if (y > TASKBAR_Y - window->height - SHELL_TITLE_HEIGHT - 4)
+                y = TASKBAR_Y - window->height - SHELL_TITLE_HEIGHT - 4;
+            window->x = x;
+            window->y = y;
         }
     }
-
-    shell_window_active = 1;
-    active_window_slot = -1;
+    else return -1;
     vga_redraw_desktop();
+    return 0;
 }
 
 unsigned int video_active_owner_process_id(void)
@@ -1898,22 +1795,6 @@ unsigned int video_active_owner_process_id(void)
         return 0;
     }
     return graphics_windows[active_window_slot].owner_process_id;
-}
-
-unsigned int video_take_launch_request(void)
-{
-    unsigned int request = pending_launch_request;
-
-    pending_launch_request = 0;
-    return request;
-}
-
-unsigned int video_take_close_request(void)
-{
-    unsigned int request = pending_close_request;
-
-    pending_close_request = 0;
-    return request;
 }
 
 void terminal_write_unsigned(unsigned int value)

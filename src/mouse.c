@@ -1,5 +1,6 @@
 #include <intrin.h>
 #include "kernel.h"
+#include "desktop.h"
 
 #define PS2_STATUS_PORT 0x64
 #define PS2_COMMAND_PORT 0x64
@@ -170,8 +171,12 @@ void mouse_handle_irq(void)
             video_mouse_move(mouse_x, mouse_y, buttons & 0x01);
             if ((buttons & 0x01) != 0 && !mouse_left_button_pressed)
             {
-                video_mouse_left_click(mouse_x, mouse_y);
+                desktop_mouse_event(mouse_x, mouse_y, 1);
             }
+            else if ((buttons & 0x01) != 0)
+                desktop_mouse_event(mouse_x, mouse_y, 2);
+            else if (mouse_left_button_pressed)
+                desktop_mouse_event(mouse_x, mouse_y, 3);
             mouse_left_button_pressed = buttons & 0x01;
         }
     }
