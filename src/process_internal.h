@@ -2,6 +2,7 @@
 #define PROCESS_INTERNAL_H
 
 #include "process.h"
+#include "smp.h"
 
 #define TASK_LIMIT process_count
 #define PROCESS_TABLE_BASE 0xC0000000
@@ -76,7 +77,9 @@ typedef struct
     unsigned int desktop_width;
     unsigned int desktop_height;
     unsigned int *saved_stack;
+    unsigned int running_cpu;
     unsigned int page_directory;
+    unsigned char fpu_state[108];
     unsigned int code_base;
     unsigned int code_size;
     unsigned int entry_offset;
@@ -125,7 +128,7 @@ typedef struct
 extern unsigned int process_count;
 extern unsigned int process_table_mapped;
 extern ProcessPipe process_pipe;
-extern unsigned int current_task;
+#define current_task (smp_cpus[smp_cpu_index()].task_index)
 extern unsigned int next_process_id;
 extern volatile unsigned int tick_count;
 
@@ -169,8 +172,11 @@ int process_release(Process *process, unsigned int slot);
 unsigned int process_kernel_stack_top(const Process *process);
 
 void process_activate_current(void);
+unsigned int *process_current_stack(void);
+void process_save_current_stack(unsigned int *stack);
 
 void process_initialize_slot(Process *process);
+void process_initialize_fpu(Process *process);
 
 int process_table_grow(void);
 

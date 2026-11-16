@@ -11,11 +11,16 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
     unsigned int task;
     unsigned int syscall_number;
 
-    processes[current_task].saved_stack = saved_stack;
-    if (current_task == 0 ||
-        processes[current_task].state != TASK_ACTIVE)
+    process_save_current_stack(saved_stack);
+    if (current_task == 0)
     {
         return (unsigned int)saved_stack;
+    }
+    if (processes[current_task].state != TASK_ACTIVE)
+    {
+        current_task = find_next_active_task();
+        process_activate_current();
+        return (unsigned int)process_current_stack();
     }
 
     task = current_task;
@@ -766,6 +771,8 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         return (unsigned int)saved_stack;
     }
 
+    if (current_task == task)
+        current_task = find_next_active_task();
     process_activate_current();
-    return (unsigned int)processes[current_task].saved_stack;
+    return (unsigned int)process_current_stack();
 }

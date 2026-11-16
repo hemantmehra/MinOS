@@ -85,6 +85,7 @@ enum ProcessStartResult process_start(
     }
 
     process->state = TASK_LOADING;
+    process_initialize_fpu(process);
     process->saved_stack = 0;
     process->code_base = PROCESS_BASE;
     process->code_size = 0;
@@ -393,7 +394,7 @@ int process_spawn(
             process_pipe.active = 0;
             if (producer != 0)
             {
-                producer->state = TASK_DYING;
+                process_terminate(producer);
             }
         }
         restore_interrupts(flags);

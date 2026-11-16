@@ -145,6 +145,7 @@ def run_msvc(developer_command):
         "keyboard.c",
         "mouse.c",
         "interrupts.c",
+        "smp.c",
         "memory.c",
         "process.c",
         "process_io.c",
@@ -169,7 +170,7 @@ def run_msvc(developer_command):
         "&& link /nologo /nodefaultlib /machine:x86 /subsystem:native "
         "/entry:kernel_main /base:0x10000 /fixed /filealign:512 "
         "/merge:.rdata=.text /merge:.data=.text /section:.text,ERW "
-        f"/incremental:no /out:kernel.exe {object_files}"
+        f"/incremental:no /out:kernel.exe {object_files} ap_blob.obj"
     )
     result = subprocess.run(
         compile_command, cwd=KERNEL_DIRECTORY, shell=True, check=False
@@ -193,6 +194,20 @@ def main():
 
     developer_command = find_visual_studio()
     prepare_build_directories()
+    result = subprocess.run(
+        [str(nasm), "-f", "bin", "-o", "ap_trampoline.bin",
+         str(ROOT / "src" / "ap_trampoline.asm")],
+        cwd=KERNEL_DIRECTORY, check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("NASM failed to assemble the AP trampoline.")
+    result = subprocess.run(
+        [str(nasm), "-f", "win32", "-o", "ap_blob.obj",
+         str(ROOT / "src" / "ap_blob.asm")],
+        cwd=KERNEL_DIRECTORY, check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("NASM failed to embed the AP trampoline.")
     run_msvc(developer_command)
 
     boot_sector = BOOT_DIRECTORY / "boot.bin"

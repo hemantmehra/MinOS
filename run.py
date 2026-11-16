@@ -49,6 +49,8 @@ def main():
             "pc",
             "-m",
             "512M",
+            "-smp",
+            "2",
             "-drive",
             f"file={IMAGE},format=raw,if=ide",
             "-drive",

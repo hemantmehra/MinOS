@@ -3,6 +3,8 @@
 #include "kernel_log.h"
 #include "process.h"
 #include "desktop.h"
+#include "process_internal.h"
+#include "smp.h"
 
 static void shell_memory_report(void)
 {
@@ -162,10 +164,13 @@ void __cdecl kernel_main(void)
     video_initialize();
     processes_initialize();
     interrupts_initialize();
+    smp_initialize();
     kernel_log(KERNEL_LOG_INFO, "kernel", "initialization complete");
 
     for (;;)
     {
+        unsigned int flags = disable_interrupts();
+        smp_lock();
         if (desktop_enabled() && desktop_server_id() == 0 &&
             (int)(tick_count - desktop_retry) >= 0)
         {
@@ -202,5 +207,7 @@ void __cdecl kernel_main(void)
             }
             kernel_log(KERNEL_LOG_INFO, "kernel", "shell started");
         }
+        smp_unlock();
+        restore_interrupts(flags);
     }
 }

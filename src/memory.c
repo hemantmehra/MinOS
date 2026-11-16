@@ -14,7 +14,7 @@
 #define PAGE_PRESENT 0x001
 #define PAGE_WRITABLE 0x002
 #define PAGE_USER 0x004
-#define PAGE_ALLOWED_FLAGS (PAGE_WRITABLE | PAGE_USER)
+#define PAGE_ALLOWED_FLAGS (PAGE_WRITABLE | PAGE_USER | 0x018)
 #define KERNEL_SHARED_BASE 0xC0000000
 #define PROCESS_TABLE_REGION 0xC0000000
 #define PROCESS_TABLE_REGION_SIZE 0x01000000
@@ -353,7 +353,8 @@ void memory_destroy_address_space(unsigned int directory_address)
     unsigned int directory_index;
     unsigned int table_index;
 
-    memory_switch_address_space((unsigned int)page_directory);
+    if (memory_current_address_space() == directory_address)
+        memory_switch_address_space((unsigned int)page_directory);
     for (directory_index = IDENTITY_TABLE_COUNT;
         directory_index < (KERNEL_SHARED_BASE >> 22);
         ++directory_index)

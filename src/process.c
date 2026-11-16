@@ -8,9 +8,17 @@
 unsigned int process_count;
 unsigned int process_table_mapped;
 ProcessPipe process_pipe;
-unsigned int current_task;
 unsigned int next_process_id = 1;
 volatile unsigned int tick_count;
+static unsigned char initial_fpu_state[108];
+
+void process_initialize_fpu(Process *process)
+{
+    unsigned int i;
+    volatile unsigned char *state = process->fpu_state;
+    for (i = 0; i < sizeof(initial_fpu_state); ++i)
+        state[i] = initial_fpu_state[i];
+}
 
 int process_release(Process *process, unsigned int slot)
 {
@@ -36,15 +44,65 @@ unsigned int process_kernel_stack_top(const Process *process)
 /* Loads the page directory and ring 0 stack of the task about to run. */
 void process_activate_current(void)
 {
-    Process *process = &processes[current_task];
+    unsigned int cpu_index = smp_cpu_index();
+    SmpCpu *cpu = &smp_cpus[cpu_index];
+    unsigned int next_task = cpu->task_index;
+    Process *process = &processes[next_task];
 
-    if (current_task == 0 || process->page_directory == 0)
+    if (cpu->fpu_owner != next_task)
+    {
+        unsigned char *old_state = cpu->fpu_owner == 0
+            ? cpu->idle_fpu_state : processes[cpu->fpu_owner].fpu_state;
+        unsigned char *new_state = next_task == 0
+            ? cpu->idle_fpu_state : process->fpu_state;
+        __asm
+        {
+            mov eax, old_state
+            fnsave [eax]
+            fwait
+            mov eax, new_state
+            frstor [eax]
+        }
+        cpu->pending_release = cpu->fpu_owner;
+        cpu->fpu_owner = next_task;
+        if (next_task != 0)
+            process->running_cpu = cpu_index + 1;
+    }
+
+    if (next_task == 0 || process->page_directory == 0)
     {
         memory_switch_address_space(memory_kernel_address_space());
         return;
     }
     interrupts_set_kernel_stack(process_kernel_stack_top(process));
     memory_switch_address_space(process->page_directory);
+}
+
+unsigned int *process_current_stack(void)
+{
+    SmpCpu *cpu = &smp_cpus[smp_cpu_index()];
+    return cpu->task_index == 0
+        ? cpu->idle_stack : processes[cpu->task_index].saved_stack;
+}
+
+void process_save_current_stack(unsigned int *stack)
+{
+    SmpCpu *cpu = &smp_cpus[smp_cpu_index()];
+    if (cpu->task_index == 0)
+        cpu->idle_stack = stack;
+    else
+        processes[cpu->task_index].saved_stack = stack;
+}
+
+void process_finish_switch(void)
+{
+    SmpCpu *cpu = &smp_cpus[smp_cpu_index()];
+    /* Called on the incoming stack, before the kernel lock is released. */
+    if (cpu->pending_release != 0)
+    {
+        processes[cpu->pending_release].running_cpu = 0;
+        cpu->pending_release = 0;
+    }
 }
 
 void process_initialize_slot(Process *process)
@@ -55,6 +113,7 @@ void process_initialize_slot(Process *process)
     process->wait_process_id = 0;
     process->window_handle = 0;
     process->saved_stack = 0;
+    process->running_cpu = 0;
     process->page_directory = 0;
     process->keyboard_event_read = 0;
     process->keyboard_event_write = 0;
@@ -129,7 +188,8 @@ void process_cleanup_terminated(void)
 
     for (slot = 1; slot < TASK_LIMIT; ++slot)
     {
-        if (processes[slot].state == TASK_DYING)
+        if (processes[slot].state == TASK_DYING &&
+            processes[slot].running_cpu == 0)
         {
             int resources_released = 1;
 
@@ -228,19 +288,25 @@ void process_cleanup_terminated(void)
 unsigned int find_next_active_task(void)
 {
     unsigned int distance;
+    unsigned int cpu = smp_cpu_index();
+    unsigned int current = smp_cpus[cpu].task_index;
 
     for (distance = 1; distance <= TASK_LIMIT; ++distance)
     {
         unsigned int candidate =
-            (current_task + distance) % TASK_LIMIT;
+            (current + distance) % TASK_LIMIT;
 
-        if (processes[candidate].state == TASK_ACTIVE &&
+        if (candidate == 0 && cpu == 0 && smp_cpus[cpu].idle_stack != 0)
+            return 0;
+        if (candidate != 0 && processes[candidate].state == TASK_ACTIVE &&
+            (processes[candidate].running_cpu == 0 ||
+             processes[candidate].running_cpu == cpu + 1) &&
             processes[candidate].saved_stack != 0)
         {
             return candidate;
         }
     }
-    return current_task;
+    return 0;
 }
 
 void process_terminate(Process *process)
@@ -258,6 +324,11 @@ void process_terminate(Process *process)
         "process",
         "exiting pid",
         process->process_id);
+    kernel_log_value(
+        KERNEL_LOG_INFO,
+        "process",
+        "exit status",
+        process->exit_status);
     filesystem_close_process_directories(process->process_id);
     filesystem_close_process_files(process->process_id);
     loopback_close_owner(process->process_id);
@@ -281,16 +352,17 @@ void process_terminate(Process *process)
 
 void process_terminate_current(void)
 {
-    if (current_task != 0 &&
-        processes[current_task].state == TASK_ACTIVE)
+    if (current_task != 0)
     {
-        process_terminate(&processes[current_task]);
+        if (processes[current_task].state == TASK_ACTIVE)
+            process_terminate(&processes[current_task]);
         current_task = find_next_active_task();
     }
 }
 
 void processes_initialize(void)
 {
+    unsigned char *state = initial_fpu_state;
     process_count = 0;
     process_table_mapped = 0;
     if (!process_table_grow())
@@ -300,6 +372,21 @@ void processes_initialize(void)
     }
 
     process_pipe.active = 0;
+    __asm
+    {
+        fninit
+        mov eax, state
+        fnsave [eax]
+        fwait
+        frstor [eax]
+    }
+    process_initialize_fpu(&processes[0]);
+    {
+        unsigned int i;
+        volatile unsigned char *state = smp_cpus[0].idle_fpu_state;
+        for (i = 0; i < sizeof(initial_fpu_state); ++i)
+            state[i] = initial_fpu_state[i];
+    }
     processes[0].state = TASK_ACTIVE;
     processes[0].process_id = 0;
     processes[0].name[0] = 'k';
@@ -311,6 +398,15 @@ void processes_initialize(void)
     processes[0].name[6] = '\0';
     current_task = 0;
     kernel_log(KERNEL_LOG_INFO, "process", "scheduler initialized");
+}
+
+void process_initialize_ap(void)
+{
+    unsigned int i;
+    volatile unsigned char *state = smp_cpus[1].idle_fpu_state;
+    __asm fninit
+    for (i = 0; i < sizeof(initial_fpu_state); ++i)
+        state[i] = initial_fpu_state[i];
 }
 
 Process *process_find_active(unsigned int process_id)
@@ -332,7 +428,7 @@ unsigned int __cdecl process_timer_tick(unsigned int *saved_stack)
 {
     unsigned int slot;
 
-    processes[current_task].saved_stack = saved_stack;
+    process_save_current_stack(saved_stack);
     __outbyte(0x20, 0x20);
     ++tick_count;
     for (slot = 1; slot < TASK_LIMIT; ++slot)
@@ -346,7 +442,16 @@ unsigned int __cdecl process_timer_tick(unsigned int *saved_stack)
     process_cleanup_terminated();
     current_task = find_next_active_task();
     process_activate_current();
-    return (unsigned int)processes[current_task].saved_stack;
+    return (unsigned int)process_current_stack();
+}
+
+unsigned int __cdecl process_ap_timer_tick(unsigned int *saved_stack)
+{
+    process_save_current_stack(saved_stack);
+    smp_timer_eoi();
+    current_task = find_next_active_task();
+    process_activate_current();
+    return (unsigned int)process_current_stack();
 }
 
 unsigned int __cdecl process_handle_exception(unsigned int *frame)
@@ -374,5 +479,5 @@ unsigned int __cdecl process_handle_exception(unsigned int *frame)
     terminal_write("; terminating.\n");
     process_terminate_current();
     process_activate_current();
-    return (unsigned int)processes[current_task].saved_stack;
+    return (unsigned int)process_current_stack();
 }

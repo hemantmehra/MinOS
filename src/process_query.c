@@ -256,7 +256,7 @@ void process_list(void)
             }
             else
             {
-                terminal_write(slot == current_task ? "RUNNING " : "READY   ");
+                terminal_write(process->running_cpu != 0 ? "RUNNING " : "READY   ");
             }
             break;
         case TASK_SLEEPING:

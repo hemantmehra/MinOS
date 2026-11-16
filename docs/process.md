@@ -60,11 +60,23 @@ entry stack is not a Linux process startup ABI.
 When a process ends, the kernel frees all of its pages and its page directory.
 The shell prints the process name and ID and continues running. The PIT
 generates timer interrupts at 1000 Hz. On each tick, the interrupt stub saves
-the current CPU registers and segments on that task's stack. The round-robin
+the current CPU registers and segments on that task's stack. Each CPU's round-robin
 scheduler records the saved stack pointer, selects the next active task, and
 returns its saved stack pointer to the interrupt stub. The stub restores that
 task's context and returns from the interrupt. This is how the process gets
-CPU time and how the shell resumes between process time slices.
+CPU time and how the shell resumes between process time slices. The scheduler
+also saves and restores each process's x87 floating-point state; SSE state is
+not saved. Up to two CPUs can run different processes at once; a process is
+never scheduled on both CPUs simultaneously. The PIT on the bootstrap CPU
+maintains the clock, while the second CPU uses a local APIC timer. Kernel work
+is serialized, so system calls and interrupt handlers do not run in parallel.
+The kernel falls back to one CPU if it cannot discover or start a second one.
+Each CPU has its own TSS and idle stack. A task retains CPU ownership until the
+interrupt return path has switched off its kernel stack, and cleanup waits for
+that ownership to be released. Kernel-lock acquisition reloads CR3 before
+accessing dynamically remapped kernel buffers, so a CPU cannot reuse a stale
+mapping after another CPU changes it. CPU discovery uses the ACPI RSDT/MADT
+or an MP table and requires an enabled xAPIC; x2APIC is not supported.
 MinOS initially displays a full-screen shell on the VBE framebuffer, without
 the desktop, taskbar or mouse pointer. Enter `mindesk` to start the desktop
 server in the background. The PS/2 mouse is initialized in streaming mode and delivers three-byte motion

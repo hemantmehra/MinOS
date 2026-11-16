@@ -25,6 +25,8 @@ python run.py
 
 QEMU appends structured kernel logs from the debug console to
 `build\diagnostics\kernel.log`, preserved across runs.
+It starts two virtual CPUs; MinOS falls back to one if a second CPU cannot
+be discovered or started.
 
 ### Clang ELF programs
 
@@ -97,6 +99,11 @@ run the former only against a disposable data disk because it overwrites
 be run only on a disposable disk; running it with an argument verifies persistence
 after reboot.
 
+After building with `--elf`, run `python tests\smp_qemu.py` to test one-CPU
+fallback, simultaneous two-CPU execution, x87 switching, process cleanup,
+HTTP, filesystem and desktop services. The test creates disposable system
+and data disks.
+
 ### Local HTTP service
 
 The kernel starts `HTTPSRV.EXE` in the background and retries starting it
@@ -126,14 +133,16 @@ fragmentation, invalid requests and timeout recovery.
 - BIOS boot sector that enters 32-bit protected mode and starts the kernel.
 - IDT with safe-halting CPU exception handlers; PIT timer, keyboard (IRQ1)
   and PS/2 mouse (IRQ12) interrupts.
+- ACPI/MP discovery and local APIC startup for up to two CPUs, with a
+  per-CPU TSS and scheduler timer. Kernel work is serialized across CPUs.
 - x86 paging with a 4 KiB physical page allocator and virtual mapping APIs
   (the first 512 MiB of RAM is identity-mapped; QEMU is run with `-m 512M`).
   Up to 32 graphics windows can be open at once; the taskbar shrinks its
   items to fit.
 
 **Processes**
-- Preemptive round-robin scheduler that saves and restores full register,
-  segment and interrupt contexts. Every program runs in ring 3 in its own
+- Preemptive round-robin scheduler that saves and restores register,
+  segment, interrupt and x87 contexts (but not SSE state). Every program runs in ring 3 in its own
   address space (a private page directory sharing only the kernel mappings,
   which user code cannot access); a fault terminates just that program.
 - The process table grows on demand, so the number of processes is limited
