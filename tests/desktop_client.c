@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <minos.h>
 
+/* Start Mindesk before running this test. */
 int main() {
     int event[3];
     int info[8];

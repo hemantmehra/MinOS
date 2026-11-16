@@ -83,6 +83,9 @@ int desktop_next(int unused, int *event);
 int desktop_create(int process_id, int approve);
 int desktop_info(int index, int *info);
 int desktop_action(int action, int handle, int value);
+/* Start Mindesk in the background: 0 started, 1 already running, negative
+   process start error on failure. */
+int start_desktop(void);
 
 /* Graphics. A window is required before drawing. */
 int create_window(const char *title, int width, int height);

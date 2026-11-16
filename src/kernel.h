@@ -11,6 +11,7 @@ void terminal_clear(void);
 void terminal_home(void);
 void video_terminal_restore(void);
 void video_initialize(void);
+void video_enable_desktop(void);
 void video_start_graphics(
     unsigned int owner_process_id,
     unsigned int window_handle);

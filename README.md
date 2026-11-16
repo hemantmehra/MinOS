@@ -141,15 +141,18 @@ fragmentation, invalid requests and timeout recovery.
 - The kernel starts the shell as an ordinary program (`SHELL.EXE`) and
   restarts it if it exits. The shell parses commands and uses the
   `start_process` and `wait_process` services to run other programs.
-- The kernel also supervises the user-mode `MINDESK.EXE` desktop server.
+- MinOS starts with a full-screen shell. Run `mindesk` to start the
+  user-mode `MINDESK.EXE` desktop server without blocking the shell.
+  The kernel supervises it after it has been started.
   Window creation requests and mouse events are handled by Mindesk; the
   kernel retains framebuffer composition, window buffers, and keyboard
   delivery. Existing windows survive a Mindesk restart. A pending window
   request fails if the server exits, and new requests fail until it restarts.
-  `tests\desktop_client.c` exercises server-call authorization and window
-  creation. The `tests\desktop_wait_*` programs and
+  After starting Mindesk, `tests\desktop_client.c` exercises server-call
+  authorization and window creation. The `tests\desktop_wait_*` programs and
   `tests\desktop_sleep_server.c` test cancellation using a deliberately
-  nonresponsive server on an isolated test image.
+  nonresponsive server on an isolated test image, started with `mindesk`. Run
+  `tests\desktop_start.c` immediately after boot to test on-demand startup.
 - Foreground and background (`&`) processes, one pipe between programs
   (`a | b`), `kill`, and child-process creation and waiting.
 - System calls through `int 0x80`: print, exit, keyboard scancode polling,
@@ -157,6 +160,8 @@ fragmentation, invalid requests and timeout recovery.
 
 **Graphics and desktop**
 - 1280x720 VBE framebuffer with a 16-color palette.
+- The shell uses the framebuffer without desktop chrome until `mindesk` is
+  entered. Windowed programs require Mindesk to be running.
 - Desktop with a light-grey wallpaper, a fixed non-closable shell window and a
   taskbar showing every window in fixed-width, left-aligned items (titles are
   truncated to 15 characters).

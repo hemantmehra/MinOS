@@ -105,6 +105,7 @@ SYS2 desktop_next, 52
 SYS2 desktop_create, 53
 SYS2 desktop_info, 54
 SYS3 desktop_action, 55
+SYS0 start_desktop, 56
 SYS0 read_key, 2
 
 ; void draw_pixel(int x, int y, int color): EBX = x, EDX = y, ECX = color

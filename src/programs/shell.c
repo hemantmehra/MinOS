@@ -175,6 +175,28 @@ int main() {
         int stages = 1;
         if (pipes == 1) {
             stages = 2;
+            int invalid = 0;
+            for (int stage = 0; stage < 2; stage++) {
+                int pos = 0;
+                int limit = pipe_at;
+                if (stage == 1) {
+                    pos = pipe_at + 1;
+                    limit = end;
+                }
+                while (pos < limit && line[pos] == ' ') pos++;
+                int count = 0;
+                while (pos < limit && line[pos] != ' ') {
+                    name[count] = line[pos];
+                    count++;
+                    pos++;
+                }
+                name[count] = 0;
+                if (name_is(name, "mindesk")) invalid = 1;
+            }
+            if (invalid) {
+                printf("Usage: mindesk\n");
+                continue;
+            }
         }
 
         int pid0 = 0;
@@ -254,6 +276,21 @@ int main() {
                             pos++;
                         }
                         path[pos] = 0;
+                    }
+                }
+                break;
+            }
+
+            if (name_is(name, "mindesk")) {
+                if (background || args[0] != 0) {
+                    printf("Usage: mindesk\n");
+                } else {
+                    int result = start_desktop();
+                    if (result == 1) {
+                        printf("mindesk: desktop is already running.\n");
+                    } else if (result < 0) {
+                        printf("mindesk: could not start desktop.\n");
+                        print_start_error(-result);
                     }
                 }
                 break;

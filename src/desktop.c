@@ -10,6 +10,7 @@ typedef struct
 } MouseEvent;
 
 static unsigned int server_id;
+static int enabled;
 static MouseEvent events[DESKTOP_QUEUE_SIZE];
 static unsigned int event_read, event_write;
 
@@ -17,6 +18,16 @@ void desktop_set_server(unsigned int pid)
 {
     server_id = pid;
     event_read = event_write = 0;
+    if (!enabled)
+    {
+        enabled = 1;
+        video_enable_desktop();
+    }
+}
+
+int desktop_enabled(void)
+{
+    return enabled;
 }
 
 unsigned int desktop_server_id(void)

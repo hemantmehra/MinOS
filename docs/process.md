@@ -65,7 +65,9 @@ scheduler records the saved stack pointer, selects the next active task, and
 returns its saved stack pointer to the interrupt stub. The stub restores that
 task's context and returns from the interrupt. This is how the process gets
 CPU time and how the shell resumes between process time slices.
-The PS/2 mouse is initialized in streaming mode and delivers three-byte motion
+MinOS initially displays a full-screen shell on the VBE framebuffer, without
+the desktop, taskbar or mouse pointer. Enter `mindesk` to start the desktop
+server in the background. The PS/2 mouse is initialized in streaming mode and delivers three-byte motion
 packets on IRQ12; the kernel clamps pointer movement to the screen and draws
 the pointer above the desktop and process windows. The bottom taskbar lists
 the shell and every created graphics window in fixed-width, left-aligned items,
@@ -135,8 +137,9 @@ the current context, and the handler dispatches on the value in `EAX`:
 | `53` | Complete window request | Mindesk only: client PID in `EBX`, approval (0 or 1) in `ECX`; rejects or allocates the requested window and wakes the client, returning `0` or `-1` if the request no longer exists |
 | `54` | Desktop window information | Mindesk only: slot in `EBX` (0–31), writable stack array of 8 integers in `ECX`; returns `1` if present, `0` if empty, or `-1`. Slot 32 returns shell focus in the first element |
 | `55` | Desktop action | Mindesk only: action in `EBX`, handle or PID in `ECX`, value in `EDX`; returns `0` or `-1` |
+| `56` | Start desktop | Starts and registers the supervised Mindesk server; returns `0` on startup, `1` if already running, or a negative process-start error |
 
-`MINDESK.EXE` is a supervised user process. It receives window requests and
+After `mindesk` is entered, `MINDESK.EXE` is a supervised user process. It receives window requests and
 mouse button/drag events, implements taskbar, Start menu, window selection and
 dragging policy, and asks the kernel to apply window and process actions.
 Desktop events contain a type and two integer arguments: `1` requests window

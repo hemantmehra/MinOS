@@ -7,8 +7,14 @@
 enum ProcessStartResult process_start_desktop(unsigned int *pid)
 {
     unsigned int flags = disable_interrupts();
-    enum ProcessStartResult result = process_start(
-        "A:/Programs/MINDESK.EXE", "", pid, 1);
+    enum ProcessStartResult result;
+    if (desktop_server_id() != 0)
+    {
+        *pid = desktop_server_id();
+        restore_interrupts(flags);
+        return PROCESS_START_OK;
+    }
+    result = process_start("A:/Programs/MINDESK.EXE", "", pid, 1);
     if (result == PROCESS_START_OK)
         desktop_set_server(*pid);
     restore_interrupts(flags);

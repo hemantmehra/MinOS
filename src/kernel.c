@@ -2,6 +2,7 @@
 #include "filesystem.h"
 #include "kernel_log.h"
 #include "process.h"
+#include "desktop.h"
 
 static void shell_memory_report(void)
 {
@@ -153,7 +154,6 @@ void __cdecl kernel_main(void)
     unsigned int process_id;
     unsigned int server_id = 0;
     unsigned int server_retry = 0;
-    unsigned int desktop_id = 0;
     unsigned int desktop_retry = 0;
     enum ProcessStartResult result;
 
@@ -166,15 +166,14 @@ void __cdecl kernel_main(void)
 
     for (;;)
     {
-        if (!process_is_running(desktop_id) &&
+        if (desktop_enabled() && desktop_server_id() == 0 &&
             (int)(tick_count - desktop_retry) >= 0)
         {
-            if (desktop_id != 0)
-                kernel_log(KERNEL_LOG_WARNING, "kernel", "restarting desktop server after exit");
+            unsigned int desktop_id;
+            kernel_log(KERNEL_LOG_WARNING, "kernel", "restarting desktop server after exit");
             result = process_start_desktop(&desktop_id);
             if (result != PROCESS_START_OK)
             {
-                desktop_id = 0;
                 kernel_log_value(KERNEL_LOG_ERROR, "kernel", "desktop server start failed", (unsigned int)result);
             }
             desktop_retry = tick_count + 1000;

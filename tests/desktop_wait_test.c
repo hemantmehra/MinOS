@@ -1,7 +1,8 @@
 #include <stdio.h>
 #include <minos.h>
 
-/* Run with argument "mindesk" and the deliberately sleeping test server. */
+/* Start the deliberately sleeping test server with mindesk, then run this
+   program with the argument "mindesk". */
 int main() {
     int child = create_process("A:/Programs/DSWAIT.EXE");
     if (child < 0) {

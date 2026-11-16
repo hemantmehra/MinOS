@@ -697,6 +697,18 @@ unsigned int __cdecl process_system_call(unsigned int *saved_stack)
         saved_stack[11] = process->process_id == desktop_server_id()
             ? (unsigned int)desktop_create(saved_stack[8], saved_stack[10]) : (unsigned int)-1;
     }
+    else if (syscall_number == PROCESS_SERVICE_START_DESKTOP)
+    {
+        if (desktop_server_id() != 0)
+            saved_stack[11] = 1;
+        else
+        {
+            unsigned int pid;
+            enum ProcessStartResult result = process_start_desktop(&pid);
+            saved_stack[11] = result == PROCESS_START_OK
+                ? 0 : (unsigned int)-(int)result;
+        }
+    }
     else if (syscall_number == PROCESS_SERVICE_DESKTOP_ACTION)
     {
         if (process->process_id != desktop_server_id())
